@@ -235,6 +235,94 @@ function createConduit(
   return g;
 }
 
+/**
+ * Prisma rectangular (secció X·Y, extrusió en Z i centrat en Z) amb el pas d'un tub
+ * buidat: forat circular, regata al cantó dret o tall complet. Així l'interior del tub
+ * només conté els cables. Les UV es normalitzen com les d'un BoxGeometry.
+ */
+function createSlabWithConduitPassage(
+  x0: number,
+  x1: number,
+  y0: number,
+  y1: number,
+  length: number,
+  cx: number,
+  cy: number,
+  r: number
+): THREE.BufferGeometry {
+  const shapes: THREE.Shape[] = [];
+  const hAt = (x: number) => Math.sqrt(Math.max(r * r - (x - cx) ** 2, 0));
+
+  if (cx - r > x0 && cx + r < x1) {
+    // Forat interior
+    const s = new THREE.Shape();
+    s.moveTo(x0, y0);
+    s.lineTo(x1, y0);
+    s.lineTo(x1, y1);
+    s.lineTo(x0, y1);
+    s.closePath();
+    const hole = new THREE.Path();
+    hole.absarc(cx, cy, r, 0, Math.PI * 2, false);
+    s.holes.push(hole);
+    shapes.push(s);
+  } else if (cx - r > x0) {
+    // Regata oberta al cantó dret (x1)
+    const h = hAt(x1);
+    const a = Math.atan2(h, x1 - cx);
+    const s = new THREE.Shape();
+    s.moveTo(x0, y0);
+    s.lineTo(x1, y0);
+    s.lineTo(x1, cy - h);
+    s.absarc(cx, cy, r, -a, a - Math.PI * 2, true);
+    s.lineTo(x1, y1);
+    s.lineTo(x0, y1);
+    s.closePath();
+    shapes.push(s);
+  } else {
+    // El tub travessa tot el gruix: dues peces (superior i inferior)
+    const h0 = hAt(x0);
+    const h1 = hAt(x1);
+    const a0 = Math.atan2(h0, x0 - cx);
+    const a1 = Math.atan2(h1, x1 - cx);
+    const top = new THREE.Shape();
+    top.moveTo(x0, cy + h0);
+    top.lineTo(x0, y1);
+    top.lineTo(x1, y1);
+    top.lineTo(x1, cy + h1);
+    top.absarc(cx, cy, r, a1, a0, false);
+    top.closePath();
+    const bottom = new THREE.Shape();
+    bottom.moveTo(x0, y0);
+    bottom.lineTo(x1, y0);
+    bottom.lineTo(x1, cy - h1);
+    bottom.absarc(cx, cy, r, -a1, -a0, true);
+    bottom.closePath();
+    shapes.push(top, bottom);
+  }
+
+  const geo = new THREE.ExtrudeGeometry(shapes, { depth: length, bevelEnabled: false, curveSegments: 40 });
+  geo.translate(0, 0, -length / 2);
+
+  // UV tipus caixa: cada cara rep coordenades 0..1 segons la seva orientació
+  const pos = geo.attributes.position;
+  const nor = geo.attributes.normal;
+  const uv = geo.attributes.uv;
+  const W = x1 - x0;
+  const H = y1 - y0;
+  for (let i = 0; i < pos.count; i++) {
+    const u = (pos.getX(i) - x0) / W;
+    const v = (pos.getY(i) - y0) / H;
+    const w = (pos.getZ(i) + length / 2) / length;
+    const nx = Math.abs(nor.getX(i));
+    const nz = Math.abs(nor.getZ(i));
+    if (nz > 0.5) uv.setXY(i, u, v);
+    else if (nx > 0.5) uv.setXY(i, w, v);
+    else uv.setXY(i, u, w);
+  }
+  uv.needsUpdate = true;
+  return geo;
+}
+
 /** Construeix una cota dimensional 3D entre dos punts */
 function createDimensionIndicator(
   p1: THREE.Vector3,
@@ -363,17 +451,29 @@ function buildInstallationScene(
       transparent: cutaway,
       opacity: cutaway ? 0.45 : 1,
     });
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(1.1, wallHeight, wallLength), wallMat);
-    wall.position.set(-0.75, 0, -0.2);
+    // B1: el tub va en una regata; la paret i l'arrebossat es buiden al pas del tub
+    // (radi del tub 0,38 + anelles corrugades) perquè a l'interior només hi hagi cables.
+    const b1Groove = { cx: -0.12, cy: 0, r: 0.43 };
+    const wall = new THREE.Mesh(
+      method === 'B1'
+        ? createSlabWithConduitPassage(-1.3, -0.2, -wallHeight / 2, wallHeight / 2, wallLength, b1Groove.cx, b1Groove.cy, b1Groove.r)
+        : new THREE.BoxGeometry(1.1, wallHeight, wallLength),
+      wallMat
+    );
+    if (method === 'B1') wall.position.set(0, 0, -0.2);
+    else wall.position.set(-0.75, 0, -0.2);
     wall.receiveShadow = true;
     root.add(wall);
 
     // Capa de guix/arrebossat frontal
     const plaster = new THREE.Mesh(
-      new THREE.BoxGeometry(0.12, wallHeight, wallLength),
+      method === 'B1'
+        ? createSlabWithConduitPassage(-0.21, -0.09, -wallHeight / 2, wallHeight / 2, wallLength, b1Groove.cx, b1Groove.cy, b1Groove.r)
+        : new THREE.BoxGeometry(0.12, wallHeight, wallLength),
       new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.9, transparent: cutaway, opacity: cutaway ? 0.3 : 1 })
     );
-    plaster.position.set(-0.15, 0, -0.2);
+    if (method === 'B1') plaster.position.set(0, 0, -0.2);
+    else plaster.position.set(-0.15, 0, -0.2);
     root.add(plaster);
 
     if (method === 'B1') {
@@ -579,8 +679,12 @@ function buildInstallationScene(
       transparent: cutaway,
       opacity: cutaway ? 0.35 : 0.92,
     });
-    const sandBed = new THREE.Mesh(new THREE.BoxGeometry(trenchW, 1.15, trenchL), sandMat);
-    sandBed.position.set(0, -0.35, -0.2);
+    // Llit de sorra amb el pas del tub buidat (radi 0,42 + anelles): l'interior del tub només conté el cable
+    const sandBed = new THREE.Mesh(
+      createSlabWithConduitPassage(-trenchW / 2, trenchW / 2, -0.35 - 1.15 / 2, -0.35 + 1.15 / 2, trenchL, 0, -0.25, 0.465),
+      sandMat
+    );
+    sandBed.position.set(0, 0, -0.2);
     root.add(sandBed);
 
     // Terra compactada (intermèdia)
