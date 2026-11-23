@@ -1159,17 +1159,19 @@ input[type='checkbox'] {
   background: #fff4ea !important;
 }
 
-.cell-exact-hl {
-  background: linear-gradient(135deg, #3b82f6, #1d4ed8) !important;
-  color: #fff !important;
+.cell-exact-hl,
+.cell-row-hl td.cell-exact-hl,
+tr td.cell-exact-hl {
+  background: #fee2e2 !important;
+  color: #dc2626 !important;
   font-weight: 800 !important;
-  box-shadow: inset 0 0 0 2px #93c5fd;
+  box-shadow: inset 0 0 0 2px #dc2626;
   animation: cellPulse 1.8s ease-in-out 3;
 }
 
 @keyframes cellPulse {
   50% {
-    box-shadow: inset 0 0 0 3px #fde68a;
+    box-shadow: inset 0 0 0 3px #f87171;
   }
 }
 
