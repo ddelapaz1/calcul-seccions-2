@@ -32,7 +32,7 @@ export const TheorySection: React.FC<TheorySectionProps> = ({ onGoToCalculator, 
       </div>
 
       {/* 3 Criteris Reglamentaris */}
-      <div className="grid-3" style={{ marginBottom: '1.25rem' }}>
+      <div className="grid-3 criteria-grid" style={{ marginBottom: '1.25rem' }}>
         <div className="card">
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', marginBottom: '0.5rem' }}>
             <span className="badge badge-copper">
