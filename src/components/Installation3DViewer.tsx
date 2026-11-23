@@ -134,42 +134,39 @@ function createWireMesh(
   return g;
 }
 
-/** Crea una mànega multiconductor amb coberta negra retallada per veure els conductors interns */
+/** Crea una mànega multiconductor amb coberta exterior opaca retallada a l'extrem per veure els conductors interns */
 function createMulticoreCable(
   length: number,
   jacketRadius: number,
   phase: PhaseSystem,
   metalMat: THREE.Material,
-  peTexture: THREE.Texture,
-  cutaway: boolean
+  peTexture: THREE.Texture
 ): THREE.Group {
   const g = new THREE.Group();
   const jacketMat = new THREE.MeshStandardMaterial({
-    color: 0x181c22,
-    roughness: 0.55,
-    metalness: 0.1,
-    transparent: cutaway,
-    opacity: cutaway ? 0.42 : 1,
+    color: 0x161a20,
+    roughness: 0.48,
+    metalness: 0.12,
   });
 
-  // Coberta exterior més curta pel davant perquè es vegin els fils
-  const jacketLen = length - 0.65;
+  // Coberta exterior sempre opaca, més curta pel davant perquè es vegin els fils emergir
+  const jacketLen = length - 0.72;
   const jacketGeo = new THREE.CylinderGeometry(jacketRadius, jacketRadius, jacketLen, 32);
   jacketGeo.rotateX(Math.PI / 2);
   const jacketMesh = new THREE.Mesh(jacketGeo, jacketMat);
-  jacketMesh.position.z = -0.32;
+  jacketMesh.position.z = -0.36;
   jacketMesh.castShadow = true;
   jacketMesh.receiveShadow = true;
   g.add(jacketMesh);
 
-  // Farciment interior blanc/gris
-  const fillerGeo = new THREE.CylinderGeometry(jacketRadius * 0.86, jacketRadius * 0.86, jacketLen + 0.02, 24);
+  // Farciment interior opac (es veu al tall frontal de la coberta)
+  const fillerGeo = new THREE.CylinderGeometry(jacketRadius * 0.84, jacketRadius * 0.84, jacketLen + 0.03, 24);
   fillerGeo.rotateX(Math.PI / 2);
   const fillerMesh = new THREE.Mesh(
     fillerGeo,
-    new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.8, transparent: true, opacity: cutaway ? 0.25 : 0.7 })
+    new THREE.MeshStandardMaterial({ color: 0xdbe2ea, roughness: 0.85 })
   );
-  fillerMesh.position.z = -0.32;
+  fillerMesh.position.z = -0.36;
   g.add(fillerMesh);
 
   const wireDefs: { color: number | 'pe'; angle: number }[] =
@@ -354,7 +351,7 @@ function buildInstallationScene(
     if (method === 'A1') {
       addUnipolarBundle(root, 0.14, 0.075, 0, 0);
     } else {
-      const cable = createMulticoreCable(cableLength, 0.25, phase, metalMat, textures.pe, cutaway);
+      const cable = createMulticoreCable(cableLength, 0.25, phase, metalMat, textures.pe);
       cable.position.set(0, 0, 0.15);
       root.add(cable);
     }
@@ -402,7 +399,7 @@ function buildInstallationScene(
         root.add(foot);
       });
 
-      const cable = createMulticoreCable(cableLength, 0.25, phase, metalMat, textures.pe, cutaway);
+      const cable = createMulticoreCable(cableLength, 0.25, phase, metalMat, textures.pe);
       cable.position.set(0.29, 0, 0.15);
       root.add(cable);
     }
@@ -423,7 +420,7 @@ function buildInstallationScene(
     plaster.position.set(-0.28, 0, -0.2);
     root.add(plaster);
 
-    const cable = createMulticoreCable(cableLength, 0.3, phase, metalMat, textures.pe, cutaway);
+    const cable = createMulticoreCable(cableLength, 0.3, phase, metalMat, textures.pe);
     cable.position.set(0.09, 0, 0.15);
     root.add(cable);
 
@@ -488,7 +485,7 @@ function buildInstallationScene(
 
     if (method === 'E') {
       // Cable multiconductor sobre safata perforada, separat de paret >= 0.3D
-      const cable = createMulticoreCable(cableLength, 0.33, phase, metalMat, textures.pe, cutaway);
+      const cable = createMulticoreCable(cableLength, 0.33, phase, metalMat, textures.pe);
       cable.position.set(0.05, 0.01, 0.15);
       root.add(cable);
 
@@ -619,7 +616,7 @@ function buildInstallationScene(
     root.add(redConduit);
 
     // Cable 0,6/1 kV XLPE a l'interior del tub
-    const cable = createMulticoreCable(cableLength, 0.27, phase, metalMat, textures.pe, cutaway);
+    const cable = createMulticoreCable(cableLength, 0.27, phase, metalMat, textures.pe);
     cable.position.set(0, -0.25, 0.2);
     root.add(cable);
 
