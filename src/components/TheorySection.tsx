@@ -2,6 +2,7 @@ import React from 'react';
 import { ArrowRight, BookOpen, Cable, Flame, Gauge, ShieldAlert, Thermometer, Zap } from 'lucide-react';
 import { CONDUCTOR_COLORS, INSULATIONS, MATERIALS } from '../data/itcBt19';
 import { ReferenceTablesPanel } from './ReferenceTablesPanel';
+import { Tex } from './Tex';
 
 interface TheorySectionProps {
   onGoToCalculator: () => void;
@@ -85,16 +86,16 @@ export const TheorySection: React.FC<TheorySectionProps> = ({ onGoToCalculator, 
             <div className="step-head">
               <div className="step-num-wrap">
                 <span className="step-num">1</span>
-                <h4 className="step-title">Intensitat de servei (I_b)</h4>
+                <h4 className="step-title">Intensitat de servei (<Tex>I_b</Tex>)</h4>
               </div>
               <span className="badge badge-slate">Monofàsic vs Trifàsic</span>
             </div>
             <p style={{ margin: '0 0 0.55rem', fontSize: '0.84rem', color: 'var(--ink-secondary)' }}>
-              A partir de la potència activa prevista <strong>P</strong> (W), la tensió nominal <strong>U</strong> (230 V o 400 V) i el factor de potència <strong>cos φ</strong>:
+              A partir de la potència activa prevista <Tex>P</Tex> (W), la tensió nominal <Tex>U</Tex> (230 V o 400 V) i el factor de potència <Tex>\cos\varphi</Tex>:
             </p>
             <div className="formula-box">
-              <div>Monofàsic (230 V): I_b = P / (U · cos φ)</div>
-              <div style={{ marginTop: '0.2rem' }}>Trifàsic (400 V):  I_b = P / (√3 · U · cos φ)</div>
+              <Tex block>{String.raw`\text{Monofàsic (230 V):}\quad I_b = \dfrac{P}{U\cos\varphi}`}</Tex>
+              <Tex block>{String.raw`\text{Trifàsic (400 V):}\quad I_b = \dfrac{P}{\sqrt{3}\,U\cos\varphi}`}</Tex>
             </div>
             <p style={{ margin: '0.5rem 0 0', fontSize: '0.78rem', color: 'var(--ink-muted)' }}>
               En trifàsic, per a una mateixa potència, la intensitat es divideix per tres respecte del sistema monofàsic equivalent.
@@ -105,7 +106,7 @@ export const TheorySection: React.FC<TheorySectionProps> = ({ onGoToCalculator, 
             <div className="step-head">
               <div className="step-num-wrap">
                 <span className="step-num">2</span>
-                <h4 className="step-title">Factors de correcció (K_t i K_g)</h4>
+                <h4 className="step-title">Factors de correcció (<Tex>K_t</Tex> i <Tex>K_g</Tex>)</h4>
               </div>
               <span className="badge badge-copper">Condicions reals</span>
             </div>
@@ -113,11 +114,11 @@ export const TheorySection: React.FC<TheorySectionProps> = ({ onGoToCalculator, 
               Les taules de la ITC-BT-19 estan calculades per a <strong>40 °C a l’aire</strong> (o <strong>25 °C en terreny</strong>) i <strong>1 sol circuit</strong>. Si canvien les condicions:
             </p>
             <div className="formula-box copper">
-              <div>K_t = √((T_màx − T_amb) / (T_màx − T_ref))</div>
-              <div style={{ marginTop: '0.2rem' }}>I' = I_b / (K_t · K_g)   (K_g de Tabla E o Tabla H)</div>
+              <Tex block>{String.raw`K_t = \sqrt{\dfrac{T_{\text{màx}} - T_{\text{amb}}}{T_{\text{màx}} - T_{\text{ref}}}}`}</Tex>
+              <Tex block>{String.raw`I' = \dfrac{I_b}{K_t \cdot K_g}\qquad \text{(}K_g\text{ de la Tabla E o la Tabla H)}`}</Tex>
             </div>
             <p style={{ margin: '0.5rem 0 0', fontSize: '0.78rem', color: 'var(--ink-muted)' }}>
-              No s’aplica K_g quan els circuits discorren paral·lels menys de 2 m.
+              No s’aplica <Tex>K_g</Tex> quan els circuits discorren paral·lels menys de 2 m.
             </p>
           </div>
 
@@ -125,15 +126,15 @@ export const TheorySection: React.FC<TheorySectionProps> = ({ onGoToCalculator, 
             <div className="step-head">
               <div className="step-num-wrap">
                 <span className="step-num">3</span>
-                <h4 className="step-title">Secció per criteri tèrmic (S_I)</h4>
+                <h4 className="step-title">Secció per criteri tèrmic (<Tex>S_I</Tex>)</h4>
               </div>
               <span className="badge badge-blue">Taules A, G o D</span>
             </div>
             <p style={{ margin: '0 0 0.55rem', fontSize: '0.84rem', color: 'var(--ink-secondary)' }}>
-              Amb el mètode d’instal·lació (<strong>A1, A2, B1, B2, C, E, F, G</strong> o soterrat <strong>D</strong>), el nombre de conductors carregats (2x o 3x) i el tipus d’aïllament (PVC o XLPE), localitzem la columna a la taula i escollim la primera secció normalitzada amb <strong>I_taula ≥ I'</strong>.
+              Amb el mètode d’instal·lació (<strong>A1, A2, B1, B2, C, E, F, G</strong> o soterrat <strong>D</strong>), el nombre de conductors carregats (2x o 3x) i el tipus d’aïllament (PVC o XLPE), localitzem la columna a la taula i escollim la primera secció normalitzada amb <Tex>{String.raw`I_{\text{taula}} \geq I'`}</Tex>.
             </p>
             <div className="formula-box">
-              Condició tèrmica:  I_taula(S_I) · K_t · K_g ≥ I_b
+              <Tex block>{String.raw`\text{Condició tèrmica:}\quad I_{\text{taula}}(S_I)\cdot K_t \cdot K_g \geq I_b`}</Tex>
             </div>
           </div>
 
@@ -141,19 +142,19 @@ export const TheorySection: React.FC<TheorySectionProps> = ({ onGoToCalculator, 
             <div className="step-head">
               <div className="step-num-wrap">
                 <span className="step-num">4</span>
-                <h4 className="step-title">Secció per caiguda de tensió (S_ΔU)</h4>
+                <h4 className="step-title">Secció per caiguda de tensió (<Tex>{String.raw`S_{\Delta U}`}</Tex>)</h4>
               </div>
               <span className="badge badge-emerald">Anexo 2</span>
             </div>
             <p style={{ margin: '0 0 0.55rem', fontSize: '0.84rem', color: 'var(--ink-secondary)' }}>
-              Amb la caiguda màxima en volts <strong>e = (% / 100) · U</strong>, la longitud <strong>L</strong> (m) i la conductivitat <strong>γ</strong> a la temperatura de servei:
+              Amb la caiguda màxima en volts <Tex>{String.raw`e = \frac{\%}{100}\cdot U`}</Tex>, la longitud <Tex>L</Tex> (m) i la conductivitat <Tex>\gamma</Tex> a la temperatura de servei:
             </p>
             <div className="formula-box emerald">
-              <div>Monofàsic: S_ΔU = (2 · P · L) / (γ · e · U)</div>
-              <div style={{ marginTop: '0.2rem' }}>Trifàsic:  S_ΔU = (P · L) / (γ · e · U)</div>
+              <Tex block>{String.raw`\text{Monofàsic:}\quad S_{\Delta U} = \dfrac{2\cdot P\cdot L}{\gamma\cdot e\cdot U}`}</Tex>
+              <Tex block>{String.raw`\text{Trifàsic:}\quad S_{\Delta U} = \dfrac{P\cdot L}{\gamma\cdot e\cdot U}`}</Tex>
             </div>
             <p style={{ margin: '0.5rem 0 0', fontSize: '0.78rem', color: 'var(--ink-muted)' }}>
-              Opcionalment (2a iteració), es pot recalcular la temperatura real T = T_0 + (T_màx − T_0)·(I / I_màx)² per optimitzar seccions ajustades.
+              Opcionalment (2a iteració), es pot recalcular la temperatura real <Tex>{String.raw`T = T_0 + (T_{\text{màx}} - T_0)\left(\frac{I}{I_{\text{màx}}}\right)^2`}</Tex> per optimitzar seccions ajustades.
             </p>
           </div>
 
@@ -169,7 +170,8 @@ export const TheorySection: React.FC<TheorySectionProps> = ({ onGoToCalculator, 
               S’escull la <strong>més gran</strong> de les dues seccions i s’arrodoneix a la secció normalitzada comercial immediatament superior:
             </p>
             <div className="formula-box">
-              1,5 · 2,5 · 4 · 6 · 10 · 16 · 25 · 35 · 50 · 70 · 95 · 120 · 150 · 185 · 240 · 300 mm²
+              <Tex block>{String.raw`S = \max\left(S_I,\ S_{\Delta U}\right) \;\rightarrow\; \text{secció normalitzada superior}`}</Tex>
+              <div style={{ marginTop: '0.2rem' }}>1,5 · 2,5 · 4 · 6 · 10 · 16 · 25 · 35 · 50 · 70 · 95 · 120 · 150 · 185 · 240 · 300 mm²</div>
             </div>
           </div>
 
@@ -182,7 +184,7 @@ export const TheorySection: React.FC<TheorySectionProps> = ({ onGoToCalculator, 
               <span className="badge badge-slate">ITC-BT-19 2.2.4 &amp; 2.3</span>
             </div>
             <p style={{ margin: '0 0 0.55rem', fontSize: '0.84rem', color: 'var(--ink-secondary)' }}>
-              El neutre té com a mínim la mateixa secció que les fases (harmònics i desequilibris). El conductor PE segueix la <strong>Tabla 2</strong> (S si S≤16, 16 si 16&lt;S≤35, S/2 si S&gt;35).
+              El neutre té com a mínim la mateixa secció que les fases (harmònics i desequilibris). El conductor PE segueix la <strong>Tabla 2</strong> (<Tex>{String.raw`S_{PE} = S`}</Tex> si <Tex>{String.raw`S \leq 16`}</Tex>; <Tex>{String.raw`S_{PE} = 16`}</Tex> si <Tex>{String.raw`16 < S \leq 35`}</Tex>; <Tex>{String.raw`S_{PE} = S/2`}</Tex> si <Tex>{String.raw`S > 35`}</Tex>).
             </p>
             <div className="wire-swatches">
               {CONDUCTOR_COLORS.map((c) => (

@@ -29,6 +29,7 @@ import {
 } from '../engine/exerciseGenerator';
 import { StepByStepView } from './StepByStepView';
 import { ReferenceTablesPanel } from './ReferenceTablesPanel';
+import { Tex, tn } from './Tex';
 
 const EMPTY_ANSWERS: StudentAnswers = {
   serviceCurrentA: '',
@@ -205,7 +206,7 @@ export const ExercisesSection: React.FC = () => {
                   </td>
                 </tr>
                 <tr>
-                  <td>Factor de potència (cos φ)</td>
+                  <td>Factor de potència (<Tex>\cos\varphi</Tex>)</td>
                   <td className="mono" style={{ textAlign: 'right', fontWeight: 700 }}>
                     {input.cosPhi.toFixed(2).replace('.', ',')}
                   </td>
@@ -272,19 +273,21 @@ export const ExercisesSection: React.FC = () => {
               <HelpCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
               <div style={{ fontSize: '0.82rem' }}>
                 <strong>Pista:</strong> Usa la fórmula{' '}
-                <span className="mono">
-                  {input.phase === 'trifasic' ? 'I = P / (√3 · U · cos φ)' : 'I = P / (U · cos φ)'}
-                </span>
+                <Tex>
+                  {input.phase === 'trifasic'
+                    ? String.raw`I = \dfrac{P}{\sqrt{3}\,U\cos\varphi}`
+                    : String.raw`I = \dfrac{P}{U\cos\varphi}`}
+                </Tex>
                 .{' '}
                 {(solution.tempFactorKt !== 1 || solution.groupingFactorKg !== 1) && (
                   <>
-                    Aplica els factors <span className="mono">K_t = {solution.tempFactorKt.toFixed(2).replace('.', ',')}</span> i{' '}
-                    <span className="mono">K_g = {solution.groupingFactorKg.toFixed(2).replace('.', ',')}</span> abans de buscar a{' '}
+                    Aplica els factors <Tex>{String.raw`K_t = ${tn(solution.tempFactorKt)}`}</Tex> i{' '}
+                    <Tex>{String.raw`K_g = ${tn(solution.groupingFactorKg)}`}</Tex> abans de buscar a{' '}
                     <strong>{solution.ampacityColumnLabel}</strong>.{' '}
                   </>
                 )}
                 Per a caiguda de tensió, recorda que per a {mat.name} a {solution.maxOperatingTempC} °C la conductivitat és{' '}
-                <strong className="mono">γ = {solution.gammaAtMaxTemp} m/(Ω·mm²)</strong>.
+                <Tex>{String.raw`\gamma = ${String(solution.gammaAtMaxTemp).replace('.', '{,}')}\ \text{m}/(\Omega\cdot\text{mm}^2)`}</Tex>.
               </div>
             </div>
           )}
@@ -305,7 +308,7 @@ export const ExercisesSection: React.FC = () => {
             {/* 1. Intensitat */}
             <div className="field-group">
               <label className="field-label">
-                <span>1. Intensitat de servei I (A)</span>
+                <span>1. Intensitat de servei <Tex>I</Tex> (A)</span>
                 <span className="field-hint">Tolerància ±2,5%</span>
               </label>
               <input
@@ -324,7 +327,7 @@ export const ExercisesSection: React.FC = () => {
             {/* 2. Secció per intensitat */}
             <div className="field-group">
               <label className="field-label">
-                <span>2. Secció normalitzada per criteri d’intensitat S_I (mm²)</span>
+                <span>2. Secció normalitzada per criteri d’intensitat <Tex>S_I</Tex> (mm²)</span>
               </label>
               <select
                 className="select mono"
@@ -346,7 +349,7 @@ export const ExercisesSection: React.FC = () => {
             {/* 3. Secció teòrica caiguda de tensió */}
             <div className="field-group">
               <label className="field-label">
-                <span>3. Secció teòrica per caiguda de tensió S_ΔU (mm²)</span>
+                <span>3. Secció teòrica per caiguda de tensió <Tex>{String.raw`S_{\Delta U}`}</Tex> (mm²)</span>
                 <span className="field-hint">Valor calculat amb decimals</span>
               </label>
               <input

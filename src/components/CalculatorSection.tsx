@@ -12,6 +12,7 @@ import {
 import { CalculationInput, calculateConductorSection } from '../engine/calculator';
 import { StepByStepView } from './StepByStepView';
 import { ReferenceTablesPanel } from './ReferenceTablesPanel';
+import { Tex } from './Tex';
 
 interface CalculatorSectionProps {
   onInspectMethodIn3D: (method: InstallationMethodId) => void;
@@ -242,7 +243,7 @@ export const CalculatorSection: React.FC<CalculatorSectionProps> = ({ onInspectM
 
               <div className="field-group">
                 <label className="field-label">
-                  <span>Factor potència (cos φ)</span>
+                  <span>Factor potència (<Tex>\cos\varphi</Tex>)</span>
                 </label>
                 <input
                   type="number"

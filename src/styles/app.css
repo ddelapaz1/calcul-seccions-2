@@ -881,6 +881,51 @@ input[type='checkbox'] {
   color: #6ee7b7;
 }
 
+/* Fórmules LaTeX (KaTeX) */
+.tex-inline .katex {
+  font-size: 1.08em;
+}
+
+.formula-box .tex-block {
+  font-family: var(--font-sans, inherit);
+}
+
+.formula-box .tex-block .katex-display {
+  margin: 0.3rem 0;
+  text-align: left;
+}
+
+.formula-box .tex-block .katex-display > .katex {
+  text-align: left;
+  font-size: 1.22em;
+}
+
+.formula-box .tex-block + .tex-block {
+  margin-top: 0.35rem;
+}
+
+.formula-box .formula-note {
+  font-size: 0.78rem;
+  color: #94a3b8;
+  margin-top: 0.35rem;
+}
+
+.formula-box .tex-hl {
+  color: #93c5fd;
+}
+
+.formula-box.copper .tex-hl {
+  color: #fdba74;
+}
+
+.formula-box.emerald .tex-hl {
+  color: #6ee7b7;
+}
+
+.step-result-pill .katex {
+  font-size: 1em;
+}
+
 /* ==========================================================================
    Resolució pas a pas
    ========================================================================== */
