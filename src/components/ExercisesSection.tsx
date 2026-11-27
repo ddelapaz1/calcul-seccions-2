@@ -27,6 +27,7 @@ import {
   generateRandomExercise,
   gradeExercise,
 } from '../engine/exerciseGenerator';
+import type { CalculationResult } from '../engine/calculator';
 import { StepByStepView } from './StepByStepView';
 import { ReferenceTablesPanel } from './ReferenceTablesPanel';
 import { Tex, tn } from './Tex';
@@ -39,7 +40,12 @@ const EMPTY_ANSWERS: StudentAnswers = {
   protectiveSection: '',
 };
 
-export const ExercisesSection: React.FC = () => {
+interface ExercisesSectionProps {
+  /** Obre la solució de l'exercici al visor 3D amb el mapa tèrmic */
+  onInspectIn3D?: (result: CalculationResult) => void;
+}
+
+export const ExercisesSection: React.FC<ExercisesSectionProps> = ({ onInspectIn3D }) => {
   const [difficulty, setDifficulty] = useState<ExerciseDifficulty>('intermedi');
   const [materialPref, setMaterialPref] = useState<'random' | ConductorMaterial>('random');
   const [exercise, setExercise] = useState<GeneratedExercise>(() =>
@@ -456,7 +462,7 @@ export const ExercisesSection: React.FC = () => {
               <RefreshCw size={14} /> Següent exercici
             </button>
           </div>
-          <StepByStepView result={solution} />
+          <StepByStepView result={solution} onViewIn3D={onInspectIn3D ? () => onInspectIn3D(solution) : undefined} />
         </div>
       )}
 

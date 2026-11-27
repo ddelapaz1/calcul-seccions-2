@@ -1,16 +1,32 @@
 import React from 'react';
-import { AlertTriangle, CheckCircle2, Flame, Gauge, Shield, Zap } from 'lucide-react';
+import { AlertTriangle, Box, CheckCircle2, Flame, Gauge, Shield, ShieldCheck, Zap } from 'lucide-react';
 import { CalculationResult } from '../engine/calculator';
 import { CONDUCTOR_COLORS, INSULATIONS, INSTALLATION_METHODS, MATERIALS } from '../data/itcBt19';
 import { Tex, tn, ts } from './Tex';
 
 interface StepByStepViewProps {
   result: CalculationResult;
+  /** Obre aquest cas al visor 3D amb el mapa tèrmic */
+  onViewIn3D?: () => void;
 }
 
 const fmt = (n: number, dec = 2) => n.toFixed(dec).replace('.', ',');
 
-export const StepByStepView: React.FC<StepByStepViewProps> = ({ result }) => {
+/** Llegenda sota una fórmula: símbol (LaTeX) → significat del paràmetre */
+const FormulaLegend: React.FC<{ items: [string, React.ReactNode][] }> = ({ items }) => (
+  <dl className="formula-legend">
+    {items.map(([sym, desc]) => (
+      <React.Fragment key={sym}>
+        <dt>
+          <Tex>{sym}</Tex>
+        </dt>
+        <dd>{desc}</dd>
+      </React.Fragment>
+    ))}
+  </dl>
+);
+
+export const StepByStepView: React.FC<StepByStepViewProps> = ({ result, onViewIn3D }) => {
   if (!result.valid) {
     return (
       <div className="alert alert-red">
@@ -102,6 +118,11 @@ export const StepByStepView: React.FC<StepByStepViewProps> = ({ result }) => {
             <div style={{ fontSize: '0.74rem', color: 'var(--ink-muted)', marginTop: '0.3rem' }}>
               Temperatura estimada del conductor en servei: <strong className="mono">{fmt(result.finalEstimatedTempC, 1)} °C</strong> (màx. {result.maxOperatingTempC} °C)
             </div>
+            {onViewIn3D && (
+              <button type="button" className="btn btn-outline btn-sm" style={{ marginTop: '0.55rem' }} onClick={onViewIn3D}>
+                <Box size={13} /> Veure aquest cas en 3D (mapa tèrmic)
+              </button>
+            )}
           </div>
 
           <div>
@@ -161,6 +182,15 @@ export const StepByStepView: React.FC<StepByStepViewProps> = ({ result }) => {
                 ? String.raw`I_b = \dfrac{P}{\sqrt{3}\,U\cos\varphi} = \dfrac{${input.powerW}}{\sqrt{3}\cdot ${input.voltage}\cdot ${tn(input.cosPhi)}} = \hl{${tn(result.serviceCurrentA)}\ \text{A}}`
                 : String.raw`I_b = \dfrac{P}{U\cos\varphi} = \dfrac{${input.powerW}}{${input.voltage}\cdot ${tn(input.cosPhi)}} = \hl{${tn(result.serviceCurrentA)}\ \text{A}}`}
             </Tex>
+            <FormulaLegend
+              items={[
+                ['I_b', 'Intensitat de servei prevista que circula per la línia (A)'],
+                ['P', `Potència activa de la càrrega (W): ${input.powerW.toLocaleString('ca-ES')} W`],
+                ['U', isTri ? `Tensió nominal entre fases (V): ${input.voltage} V` : `Tensió nominal fase-neutre (V): ${input.voltage} V`],
+                ['\\cos\\varphi', `Factor de potència de la càrrega: ${fmt(input.cosPhi, 2)}`],
+                ...(isTri ? ([['\\sqrt{3}', 'Factor del sistema trifàsic equilibrat (relació entre tensió de línia i de fase)']] as [string, string][]) : []),
+              ]}
+            />
           </div>
         </div>
 
@@ -181,10 +211,26 @@ export const StepByStepView: React.FC<StepByStepViewProps> = ({ result }) => {
               Temperatura {input.ambientTemp} °C · referència {meth.refTemp} °C · <Tex>{String.raw`T_{\text{màx}} = ${result.maxOperatingTempC}\ ^{\circ}\text{C}`}</Tex>
             </div>
             <Tex block>{String.raw`K_t = \sqrt{\dfrac{T_{\text{màx}} - T_{\text{amb}}}{T_{\text{màx}} - T_{\text{ref}}}} = \sqrt{\dfrac{${result.maxOperatingTempC} - ${input.ambientTemp}}{${result.maxOperatingTempC} - ${meth.refTemp}}} = \hl{${tn(result.tempFactorKt)}}`}</Tex>
+            <FormulaLegend
+              items={[
+                ['K_t', 'Factor de correcció per temperatura (adimensional)'],
+                ['T_{\\text{màx}}', `Temperatura màxima de servei del conductor segons l’aïllament ${result.effectiveInsulation}: ${result.maxOperatingTempC} °C`],
+                ['T_{\\text{amb}}', `Temperatura real ${meth.isBuried ? 'del terreny' : 'de l’aire ambient'}: ${input.ambientTemp} °C`],
+                ['T_{\\text{ref}}', `Temperatura de referència de la taula (${meth.isBuried ? 'terreny' : 'aire'}): ${meth.refTemp} °C`],
+              ]}
+            />
             <div className="formula-note">
               <Tex>K_g</Tex> ({result.groupingSource}) = <strong>{fmt(result.groupingFactorKg, 2)}</strong>
             </div>
             <Tex block>{String.raw`I' = \dfrac{I_b}{K_t\cdot K_g} = \dfrac{${tn(result.serviceCurrentA)}}{${tn(result.tempFactorKt)}\cdot ${tn(result.groupingFactorKg)}} = \hl{${tn(result.correctedCurrentA)}\ \text{A}}`}</Tex>
+            <FormulaLegend
+              items={[
+                ["I'", 'Intensitat corregida: valor que s’ha de buscar a la taula d’intensitats admissibles (A)'],
+                ['I_b', 'Intensitat de servei calculada al pas 1 (A)'],
+                ['K_t', 'Factor de correcció per temperatura'],
+                ['K_g', 'Factor de correcció per agrupament de diversos circuits (1 si el circuit va sol)'],
+              ]}
+            />
           </div>
         </div>
 
@@ -207,6 +253,15 @@ export const StepByStepView: React.FC<StepByStepViewProps> = ({ result }) => {
             </div>
             <Tex block>{String.raw`S_I = \hl{${ts(result.sectionByAmpacity)}\ \text{mm}^2}\qquad I_{\text{taula}} = ${result.baseAmpacityAtThermalSection}\ \text{A}`}</Tex>
             <Tex block>{String.raw`I_{\text{màx,ef}} = I_{\text{taula}}\cdot K_t\cdot K_g = ${tn(result.effectiveAmpacityAtThermalSection, 1)}\ \text{A} \geq I_b = ${tn(result.serviceCurrentA)}\ \text{A}`}</Tex>
+            <FormulaLegend
+              items={[
+                ['S_I', 'Secció mínima pel criteri d’escalfament (mm²)'],
+                ['I_{\\text{taula}}', 'Intensitat admissible que dona la taula per a la secció escollida, en condicions de referència (A)'],
+                ['I_{\\text{màx,ef}}', 'Intensitat admissible efectiva del cable un cop aplicats els factors de correcció (A)'],
+                ['K_t,\\ K_g', 'Factors de correcció per temperatura i per agrupament (pas 2)'],
+                ['I_b', 'Intensitat de servei (A): no pot superar la intensitat admissible efectiva'],
+              ]}
+            />
           </div>
         </div>
 
@@ -228,6 +283,17 @@ export const StepByStepView: React.FC<StepByStepViewProps> = ({ result }) => {
                 ? String.raw`S_{\Delta U} = \dfrac{P\cdot L}{\gamma\cdot e\cdot U} = \dfrac{${input.powerW}\cdot ${ts(input.lengthM)}}{${ts(result.gammaAtMaxTemp)}\cdot ${tn(result.maxVoltageDropV)}\cdot ${input.voltage}} = \hl{${tn(result.theoreticalSectionByDrop)}\ \text{mm}^2}`
                 : String.raw`S_{\Delta U} = \dfrac{2\cdot P\cdot L}{\gamma\cdot e\cdot U} = \dfrac{2\cdot ${input.powerW}\cdot ${ts(input.lengthM)}}{${ts(result.gammaAtMaxTemp)}\cdot ${tn(result.maxVoltageDropV)}\cdot ${input.voltage}} = \hl{${tn(result.theoreticalSectionByDrop)}\ \text{mm}^2}`}
             </Tex>
+            <FormulaLegend
+              items={[
+                ['S_{\\Delta U}', 'Secció teòrica mínima pel criteri de caiguda de tensió (mm²)'],
+                ['P', `Potència activa transportada (W): ${input.powerW.toLocaleString('ca-ES')} W`],
+                ['L', `Longitud de la línia, d’origen a càrrega (m): ${input.lengthM.toLocaleString('ca-ES')} m`],
+                ['\\gamma', `Conductivitat del ${mat.name.toLowerCase()} a ${result.maxOperatingTempC} °C (m/(Ω·mm²))`],
+                ['e', `Caiguda de tensió màxima admissible en volts: ${input.maxVoltageDropPct} % de ${input.voltage} V = ${fmt(result.maxVoltageDropV, 2)} V`],
+                ['U', isTri ? `Tensió nominal entre fases (V): ${input.voltage} V` : `Tensió nominal fase-neutre (V): ${input.voltage} V`],
+                ...(isTri ? [] : ([['2', 'El corrent recorre la línia dues vegades (anada per la fase i tornada pel neutre)']] as [string, string][])),
+              ]}
+            />
             <div style={{ marginTop: '0.25rem' }}>
               Secció normalitzada immediatament superior: <strong>{result.sectionByDrop.toString().replace('.', ',')} mm²</strong>
             </div>
@@ -269,6 +335,12 @@ export const StepByStepView: React.FC<StepByStepViewProps> = ({ result }) => {
             <CheckCircle2 size={17} style={{ flexShrink: 0, marginTop: 2 }} />
             <div>
               <Tex>{String.raw`S_{\text{definitiva}} = \max(S_I,\ S_{\Delta U}) = \mathbf{${ts(result.finalSection)}\ mm^2}`}</Tex> ({mat.name}, {result.effectiveInsulation}). Intensitat admissible efectiva: <strong className="mono">{fmt(result.finalEffectiveAmpacity, 1)} A</strong> (≥ {fmt(result.serviceCurrentA, 2)} A) · Caiguda de tensió real: <strong className="mono">{fmt(result.finalVoltageDropV, 2)} V ({fmt(result.finalVoltageDropPct, 2)}%)</strong> (≤ {input.maxVoltageDropPct}%).
+              <dl className="formula-legend formula-legend-light">
+                <dt><Tex>{String.raw`S_I`}</Tex></dt>
+                <dd>Secció pel criteri d’intensitat admissible (pas 3)</dd>
+                <dt><Tex>{String.raw`S_{\Delta U}`}</Tex></dt>
+                <dd>Secció pel criteri de caiguda de tensió (pas 4)</dd>
+              </dl>
             </div>
           </div>
         </div>
@@ -294,7 +366,10 @@ export const StepByStepView: React.FC<StepByStepViewProps> = ({ result }) => {
                 : result.finalSection <= 35
                   ? String.raw`S_{PE} = 16\ \text{mm}^2\ \ (16 < S \leq 35)`
                   : String.raw`S_{PE} \geq S/2 = ${tn(result.finalSection / 2, 1)}\ \text{mm}^2 \rightarrow ${ts(result.protectiveSection)}\ \text{mm}^2`}
-            </Tex>.<br />
+            </Tex>{' '}
+            <span className="inline-legend">
+              (<Tex>{String.raw`S_{PE}`}</Tex>: secció del conductor de protecció · <Tex>S</Tex>: secció dels conductors de fase)
+            </span>.<br />
             • <strong>Identificació obligatòria (ITC-BT-19 2.2.4):</strong>
           </p>
           <div className="wire-swatches">
@@ -311,6 +386,95 @@ export const StepByStepView: React.FC<StepByStepViewProps> = ({ result }) => {
             ))}
           </div>
         </div>
+
+        {/* Step 7 */}
+        {result.protection && (() => {
+          const p = result.protection;
+          const deviceName = p.device === 'magnetotermic' ? 'interruptor magnetotèrmic' : 'fusible gG';
+          const kNorm =
+            p.device === 'magnetotermic'
+              ? p.ratingA !== null && p.ratingA > 125
+                ? 'UNE-EN 60947-2 (caixa emmotllada)'
+                : 'UNE-EN 60898'
+              : 'UNE-EN 60269 (gG)';
+          return (
+            <div className="step-card">
+              <div className="step-head">
+                <div className="step-num-wrap">
+                  <span className="step-num">7</span>
+                  <h4 className="step-title">Coordinació amb la protecció contra sobrecàrregues</h4>
+                </div>
+                <span
+                  className="step-result-pill"
+                  style={
+                    p.complies
+                      ? { background: 'var(--emerald-soft)', color: 'var(--emerald)', borderColor: 'var(--emerald-border)' }
+                      : { background: 'var(--amber-soft)', color: 'var(--amber)', borderColor: 'var(--amber-border)' }
+                  }
+                >
+                  <ShieldCheck size={13} style={{ display: 'inline', verticalAlign: '-2px', marginRight: 4 }} />
+                  {p.ratingA !== null ? `In = ${p.ratingA} A ${p.complies ? '✓' : '✗'}` : 'Sense In'}
+                </span>
+              </div>
+              <p style={{ margin: '0 0 0.6rem', fontSize: '0.86rem', color: 'var(--ink-secondary)' }}>
+                La línia s’ha de protegir amb un <strong>{deviceName}</strong> que compleixi les dues condicions de la <strong>ITC-BT-22</strong> (UNE-HD 60364-4-43, 433.1).{' '}
+                {p.ratingA !== null &&
+                  (p.autoSelected
+                    ? <>Triem la intensitat nominal normalitzada immediatament superior a <Tex>I_b</Tex>: <strong>{p.ratingA} A</strong>.</>
+                    : <>Intensitat nominal triada: <strong>{p.ratingA} A</strong>.</>)}
+              </p>
+              {p.ratingA === null ? (
+                <div className="alert alert-amber">
+                  <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+                  <span>No hi ha cap {deviceName} normalitzat amb <Tex>{String.raw`I_n \geq I_b`}</Tex>: cal partir la càrrega en diversos circuits o fer servir conductors en paral·lel.</span>
+                </div>
+              ) : (
+                <>
+                  <div className="formula-box">
+                    <div>Condició 1 {p.cond1 ? '✓' : '✗'}</div>
+                    <Tex block>{String.raw`I_b \leq I_n \leq I_z \;\rightarrow\; ${tn(p.serviceCurrentA)}\ \text{A} \leq ${p.ratingA}\ \text{A} \leq ${tn(p.izA, 1)}\ \text{A}`}</Tex>
+                    <div style={{ marginTop: '0.3rem' }}>Condició 2 {p.cond2 ? '✓' : '✗'}</div>
+                    <Tex block>{String.raw`I_2 = k\cdot I_n = ${tn(p.k)}\cdot ${p.ratingA} = ${tn(p.i2A, 1)}\ \text{A} \;\leq\; 1{,}45\cdot I_z = 1{,}45\cdot ${tn(p.izA, 1)} = ${tn(1.45 * p.izA, 1)}\ \text{A}`}</Tex>
+                    <FormulaLegend
+                      items={[
+                        ['I_b', 'Intensitat de servei de la línia (pas 1)'],
+                        ['I_n', `Intensitat nominal del ${deviceName} (calibre normalitzat)`],
+                        ['I_z', `Intensitat admissible efectiva del conductor de ${ts(result.finalSection).replace('{,}', ',')} mm² amb els factors de correcció (pas 5)`],
+                        ['I_2', 'Intensitat convencional de funcionament: assegura el tret de la protecció en el temps convencional'],
+                        ['k', `Factor de la norma del dispositiu, ${kNorm}: k = ${fmt(p.k, 2)}`],
+                        ['1{,}45', 'Sobrecàrrega màxima que el conductor tolera durant el temps convencional sense degradar-se'],
+                      ]}
+                    />
+                  </div>
+                  {p.complies ? (
+                    <div className="alert alert-emerald" style={{ marginTop: '0.7rem' }}>
+                      <CheckCircle2 size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+                      <span>
+                        El {deviceName} de <strong>{p.ratingA} A</strong> protegeix correctament el conductor de {result.finalSection.toString().replace('.', ',')} mm².
+                        {p.device === 'magnetotermic' && p.ratingA <= 125 && ' En magnetotèrmics UNE-EN 60898, k = 1,45: la condició 2 es compleix sempre que es compleixi la 1.'}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="alert alert-amber" style={{ marginTop: '0.7rem' }}>
+                      <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+                      <span>
+                        {p.serviceCurrentA > p.ratingA ? (
+                          <>La intensitat nominal triada és inferior a <Tex>I_b</Tex>: la protecció dispararia en servei normal. Cal una <Tex>I_n</Tex> més gran.</>
+                        ) : p.requiredSection !== null ? (
+                          <>
+                            Amb <Tex>{String.raw`I_n = ${p.ratingA}\ \text{A}`}</Tex> cal <Tex>{String.raw`I_z \geq ${tn(p.minIzA, 1)}\ \text{A}`}</Tex>: s’ha d’<strong>augmentar la secció a {p.requiredSection.toString().replace('.', ',')} mm²</strong> (<Tex>{String.raw`I_z = ${tn(p.requiredIzA ?? 0, 1)}\ \text{A}`}</Tex>), o bé triar una protecció de calibre menor si encara és ≥ <Tex>I_b</Tex>.
+                          </>
+                        ) : (
+                          <>Cap secció d’aquest mètode no arriba a <Tex>{String.raw`I_z \geq ${tn(p.minIzA, 1)}\ \text{A}`}</Tex>: cal conductors en paral·lel o un altre mètode d’instal·lació.</>
+                        )}
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

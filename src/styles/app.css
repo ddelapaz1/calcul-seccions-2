@@ -1590,3 +1590,193 @@ tr td.cell-exact-hl {
     scroll-behavior: auto !important;
   }
 }
+
+/* Selector de modalitat dins del visor 3D */
+.canvas-variant-bar {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.canvas-variant-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fbbf24;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  padding: 0.3rem 0.55rem;
+}
+
+.canvas-variant-bar .hud-btn-group {
+  flex-wrap: wrap;
+}
+
+.example-link {
+  all: unset;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.example-link:hover {
+  color: var(--blue);
+}
+
+.example-link:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* Llegenda de paràmetres sota les fórmules */
+.formula-legend {
+  margin: 0.15rem 0 0.45rem;
+  padding: 0.4rem 0 0 0.7rem;
+  border-top: 1px dashed rgba(148, 163, 184, 0.25);
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 0.6rem;
+  row-gap: 0.12rem;
+  font-family: var(--font-sans, inherit);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: #94a3b8;
+}
+
+.formula-legend dt {
+  color: #cbd5e1;
+  text-align: right;
+}
+
+.formula-legend dt .katex {
+  font-size: 1em;
+}
+
+.formula-legend dd {
+  margin: 0;
+}
+
+.formula-legend-light {
+  color: var(--ink-muted);
+  border-top-color: var(--border);
+  margin-top: 0.4rem;
+  padding-left: 0;
+}
+
+.formula-legend-light dt {
+  color: var(--ink-secondary);
+}
+
+.inline-legend {
+  font-size: 0.78em;
+  color: var(--ink-muted);
+}
+
+/* Mapa tèrmic al visor 3D */
+.heat-legend {
+  position: absolute;
+  right: 0.9rem;
+  bottom: 4.1rem;
+  width: min(260px, calc(100% - 1.8rem));
+  background: rgba(15, 23, 42, 0.78);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 11px;
+  padding: 0.5rem 0.7rem 0.45rem;
+  color: #e2e8f0;
+  font-size: 0.75rem;
+}
+
+.heat-legend-title {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.4rem;
+}
+
+.heat-legend-title strong {
+  color: #fff;
+}
+
+.heat-legend-bar {
+  position: relative;
+  height: 9px;
+  border-radius: 5px;
+}
+
+.heat-legend-tick,
+.heat-limit-tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: #f8fafc;
+  border-radius: 1px;
+}
+
+.heat-limit-tick {
+  background: var(--ink);
+  opacity: 0.55;
+}
+
+.heat-legend-marker {
+  position: absolute;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  margin: -6.5px 0 0 -6.5px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #0f172a;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.4);
+  transition: left 0.25s var(--ease, ease);
+}
+
+.heat-legend-scale {
+  display: flex;
+  margin-top: 0.3rem;
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+
+.compare-row {
+  display: grid;
+  grid-template-columns: 98px 1fr 58px;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.compare-row.selected {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.compare-code {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.compare-row.selected .compare-code {
+  font-weight: 800;
+  color: var(--blue);
+}
+
+@media (max-width: 720px) {
+  .heat-legend {
+    bottom: 6.4rem;
+  }
+}

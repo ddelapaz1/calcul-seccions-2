@@ -1,19 +1,98 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { Box, Eye, Flame, Layers, RotateCw, Sliders } from 'lucide-react';
+import { Box, Calculator, Eye, Flame, Layers, RotateCw, Sliders, Thermometer } from 'lucide-react';
 import {
   ConductorMaterial,
   INSTALLATION_METHODS,
+  INSULATIONS,
   InstallationMethodId,
+  InsulationType,
   METHOD_ORDER,
   PhaseSystem,
+  STANDARD_SECTIONS,
+  StandardSection,
+  getGroupingFactor,
+  getTempCorrectionFactor,
   lookupBaseAmpacity,
 } from '../data/itcBt19';
+import type { CalculationResult } from '../engine/calculator';
+import { Tex, tn, ts } from './Tex';
+
+/** Cas de càlcul enviat al visor des de la calculadora o dels exercicis */
+export interface ViewerCalcContext {
+  source: 'calculadora' | 'exercici';
+  method: InstallationMethodId;
+  phase: PhaseSystem;
+  material: ConductorMaterial;
+  insulation: InsulationType;
+  ambientTemp: number;
+  groupedCircuits: number;
+  serviceCurrentA: number;
+  section: StandardSection;
+}
+
+export function viewerContextFromResult(result: CalculationResult, source: ViewerCalcContext['source']): ViewerCalcContext {
+  return {
+    source,
+    method: result.input.method,
+    phase: result.effectivePhase,
+    material: result.input.material,
+    insulation: result.effectiveInsulation,
+    ambientTemp: result.input.ambientTemp,
+    groupedCircuits: result.input.groupedCircuits,
+    serviceCurrentA: result.serviceCurrentA,
+    section: result.finalSection,
+  };
+}
 
 interface Installation3DViewerProps {
   selectedMethod: InstallationMethodId;
   onSelectMethod: (method: InstallationMethodId) => void;
+  /** Últim cas enviat des de la calculadora o els exercicis (activa el mapa tèrmic) */
+  calcContext?: ViewerCalcContext | null;
+  onClearCalcContext?: () => void;
+  /** Porta el mètode seleccionat a la calculadora */
+  onCalculateWithMethod?: (method: InstallationMethodId) => void;
+}
+
+/** Escala de color tèrmica: t = (T − T_amb)/(T_màx − T_amb); t > 1 indica sobrecàrrega */
+const HEAT_STOPS: [number, string][] = [
+  [0, '#2563eb'],
+  [0.4, '#10b981'],
+  [0.65, '#eab308'],
+  [0.85, '#f97316'],
+  [1, '#dc2626'],
+  [1.25, '#c026d3'],
+];
+const HEAT_MAX_T = 1.25;
+
+function heatColor(t: number): THREE.Color {
+  const x = Math.min(Math.max(t, 0), HEAT_MAX_T);
+  for (let i = 1; i < HEAT_STOPS.length; i++) {
+    const [t1, c1] = HEAT_STOPS[i];
+    if (x <= t1) {
+      const [t0, c0] = HEAT_STOPS[i - 1];
+      return new THREE.Color(c0).lerp(new THREE.Color(c1), (x - t0) / (t1 - t0));
+    }
+  }
+  return new THREE.Color(HEAT_STOPS[HEAT_STOPS.length - 1][1]);
+}
+
+const HEAT_GRADIENT_CSS = `linear-gradient(90deg, ${HEAT_STOPS.map(([t, c]) => `${c} ${(t / HEAT_MAX_T) * 100}%`).join(', ')})`;
+
+interface ThermalEstimate {
+  available: boolean;
+  ambient: number;
+  tMax: number;
+  itab: number | null;
+  kt: number;
+  kg: number;
+  iz: number;
+  ratio: number;
+  temp: number;
+  /** Escalfament relatiu (0 = T_amb, 1 = T_màx) */
+  t: number;
 }
 
 type CameraPreset = 'iso' | 'section' | 'front' | 'top';
@@ -23,6 +102,46 @@ const CAMERA_PRESETS: Record<CameraPreset, { pos: [number, number, number]; targ
   section: { pos: [0.3, 0.45, 5.4], target: [0, 0.2, 0], label: 'Tall transversal' },
   front: { pos: [5.4, 0.9, 0.2], target: [0, 0.2, 0], label: 'Lateral' },
   top: { pos: [0.1, 6.2, 1.8], target: [0, 0, 0], label: 'Superior' },
+};
+
+/** Modalitat constructiva d'un mètode (un mateix mètode de referència pot correspondre a diversos sistemes de la Tabla B) */
+interface MethodVariant {
+  id: string;
+  label: string;
+  description: string;
+  /** Índex de l'exemple de `INSTALLATION_METHODS[m].examples` que representa */
+  exampleIndex?: number;
+}
+
+/** Modalitats visualitzables per mètode. La primera és la que es mostra per defecte. */
+const METHOD_VARIANTS: Partial<Record<InstallationMethodId, MethodVariant[]>> = {
+  A1: [
+    { id: 'tub', label: 'En tub', description: 'Conductors unipolars dins d’un tub encastat a la paret tèrmicament aïllant.', exampleIndex: 0 },
+    { id: 'directe', label: 'Mànega directa', description: 'Cable multiconductor encastat directament a la paret aïllant, sense tub.', exampleIndex: 1 },
+  ],
+  B1: [
+    { id: 'encastat', label: 'Tub encastat', description: 'Tub corrugat encastat en una regata de la paret d’obra.', exampleIndex: 0 },
+    { id: 'superficial', label: 'Tub superficial', description: 'Tub rígid fixat sobre la paret amb abraçadores (separació < 0,3·D).', exampleIndex: 1 },
+    { id: 'canal', label: 'Canal protectora', description: 'Conductors allotjats en una canal protectora (canaleta) sobre la paret.', exampleIndex: 2 },
+  ],
+  B2: [
+    { id: 'encastat', label: 'Tub encastat', description: 'Tub corrugat encastat en una regata de la paret d’obra.', exampleIndex: 0 },
+    { id: 'superficial', label: 'Tub superficial', description: 'Tub rígid fixat sobre la paret amb abraçadores (separació < 0,3·D).', exampleIndex: 1 },
+    { id: 'canal', label: 'Canal protectora', description: 'Mànega allotjada en una canal protectora (canaleta) sobre la paret.', exampleIndex: 2 },
+  ],
+  C: [
+    { id: 'paret', label: 'Sobre paret', description: 'Cable fixat directament a la paret amb grapes (separació < 0,3·D).', exampleIndex: 1 },
+    { id: 'safata', label: 'Safata no perforada', description: 'Cable sobre una safata de base contínua, sense ventilació inferior.', exampleIndex: 0 },
+    { id: 'encastat', label: 'Encastat sense tub', description: 'Cable encastat directament a la paret d’obra, sense tub.', exampleIndex: 2 },
+  ],
+  E: [
+    { id: 'safata', label: 'Safata perforada', description: 'Cable sobre safata perforada: l’aire circula també per sota.', exampleIndex: 1 },
+    { id: 'paret', label: 'Separat de paret', description: 'Cable sostingut amb distanciadors a ≥ 0,3·D de la paret.', exampleIndex: 0 },
+  ],
+  F: [
+    { id: 'trevol', label: 'En trèvol', description: 'Tres cables unipolars en contacte formant un triangle (trèvol).' },
+    { id: 'pla', label: 'En pla', description: 'Cables unipolars en contacte, l’un al costat de l’altre en una capa.' },
+  ],
 };
 
 /** Crea una textura a ratlles verd-groc per al conductor de protecció PE */
@@ -118,6 +237,7 @@ function createWireMesh(
   const insGeo = new THREE.CylinderGeometry(outerRadius, outerRadius, length, 24);
   insGeo.rotateX(Math.PI / 2);
   const insMesh = new THREE.Mesh(insGeo, insMat);
+  insMesh.userData.thermal = true;
   insMesh.castShadow = true;
   insMesh.receiveShadow = true;
   g.add(insMesh);
@@ -154,6 +274,7 @@ function createMulticoreCable(
   const jacketGeo = new THREE.CylinderGeometry(jacketRadius, jacketRadius, jacketLen, 32);
   jacketGeo.rotateX(Math.PI / 2);
   const jacketMesh = new THREE.Mesh(jacketGeo, jacketMat);
+  jacketMesh.userData.thermal = true;
   jacketMesh.position.z = -0.36;
   jacketMesh.castShadow = true;
   jacketMesh.receiveShadow = true;
@@ -356,7 +477,9 @@ function buildInstallationScene(
   phase: PhaseSystem,
   material: ConductorMaterial,
   cutaway: boolean,
-  textures: { pe: THREE.Texture; brick: THREE.Texture; wool: THREE.Texture }
+  textures: { pe: THREE.Texture; brick: THREE.Texture; wool: THREE.Texture },
+  variant?: string,
+  thermal?: { color: THREE.Color; glow: number } | null
 ): THREE.Group {
   const root = new THREE.Group();
   const cableLength = 4.6;
@@ -391,8 +514,139 @@ function buildInstallationScene(
     });
   };
 
+  // ---------- Peces reutilitzables entre mètodes ----------
+
+  /** Paret d'obra (maó, x ∈ [-1,3, -0,2]) + arrebossat (x ∈ [-0,2, -0,08]). Opcionalment buidada al pas d'un tub o cable. */
+  const addMasonryWall = (passage?: { cx: number; cy: number; r: number }) => {
+    const wallMat = new THREE.MeshStandardMaterial({
+      map: textures.brick,
+      roughness: 0.85,
+      transparent: cutaway,
+      opacity: cutaway ? 0.45 : 1,
+    });
+    const plasterMat = new THREE.MeshStandardMaterial({
+      color: 0xf1f5f9,
+      roughness: 0.9,
+      transparent: cutaway,
+      opacity: cutaway ? 0.3 : 1,
+    });
+    const slab = (x0: number, x1: number) =>
+      passage && passage.cx + passage.r > x0
+        ? createSlabWithConduitPassage(x0, x1, -wallHeight / 2, wallHeight / 2, wallLength, passage.cx, passage.cy, passage.r)
+        : (() => {
+            const g = new THREE.BoxGeometry(x1 - x0, wallHeight, wallLength);
+            g.translate((x0 + x1) / 2, 0, 0);
+            return g;
+          })();
+    const wall = new THREE.Mesh(slab(-1.3, -0.2), wallMat);
+    wall.position.z = -0.2;
+    wall.receiveShadow = true;
+    const plaster = new THREE.Mesh(slab(-0.2, -0.08), plasterMat);
+    plaster.position.z = -0.2;
+    root.add(wall, plaster);
+  };
+
+  /** Tub rígid en muntatge superficial amb abraçadores. Retorna la x de l'eix. */
+  const addSurfaceConduit = (): number => {
+    const x = 0.28;
+    const conduit = createConduit(cableLength - 0.4, 0.36, 0x94a3b8, false, cutaway);
+    conduit.position.set(x, 0, -0.1);
+    root.add(conduit);
+    const clampMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.65, roughness: 0.35 });
+    [-1.3, 0, 1.3].forEach((z) => {
+      const clamp = new THREE.Mesh(new THREE.TorusGeometry(0.39, 0.04, 10, 24), clampMat);
+      clamp.position.set(x, 0, z);
+      root.add(clamp);
+      const foot = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.95, 0.14), clampMat);
+      foot.position.set(-0.04, 0, z);
+      root.add(foot);
+    });
+    return x;
+  };
+
+  /** Canal protectora (canaleta de PVC amb tapa) fixada sobre la paret. Retorna la x del centre. */
+  const addTrunking = (): number => {
+    const x0 = -0.08;
+    const depth = 0.62;
+    const height = 0.74;
+    const t = 0.04;
+    const len = cableLength - 0.5;
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.5, metalness: 0.02 });
+    const lidMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      roughness: 0.5,
+      transparent: cutaway,
+      opacity: cutaway ? 0.28 : 1,
+    });
+    const back = new THREE.Mesh(new THREE.BoxGeometry(t, height, len), bodyMat);
+    back.position.set(x0 + t / 2, 0, -0.1);
+    const top = new THREE.Mesh(new THREE.BoxGeometry(depth, t, len), bodyMat);
+    top.position.set(x0 + depth / 2, height / 2 - t / 2, -0.1);
+    const bottom = new THREE.Mesh(new THREE.BoxGeometry(depth, t, len), bodyMat);
+    bottom.position.set(x0 + depth / 2, -height / 2 + t / 2, -0.1);
+    const lid = new THREE.Mesh(new THREE.BoxGeometry(t, height + 0.05, len), lidMat);
+    lid.position.set(x0 + depth - t / 2, 0, -0.1);
+    [back, top, bottom].forEach((m) => {
+      m.castShadow = true;
+      m.receiveShadow = true;
+    });
+    root.add(back, top, bottom, lid);
+    return x0 + depth / 2;
+  };
+
+  /** Paret posterior fosca (cara a x = -1,5) per a muntatges a l'aire */
+  const addBackWall = () => {
+    const wall = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, wallHeight, wallLength),
+      new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.85 })
+    );
+    wall.position.set(-1.75, 0, -0.2);
+    root.add(wall);
+  };
+
+  const steelMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.72, roughness: 0.32 });
+
+  /** Safata metàl·lica sobre mènsules (perforada o no). La cara superior de la base queda a y = -0,33. */
+  const addCableTray = (perforated: boolean) => {
+    addBackWall();
+    [-1.3, 1.1].forEach((z) => {
+      const bracket = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.12, 0.16), steelMat);
+      bracket.position.set(-0.35, -0.45, z);
+      root.add(bracket);
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.75, 0.24), steelMat);
+      plate.position.set(-1.46, -0.45, z);
+      root.add(plate);
+    });
+
+    const trayWidth = 1.65;
+    const trayLen = 4.1;
+    const trayBase = new THREE.Mesh(new THREE.BoxGeometry(trayWidth, 0.06, trayLen), steelMat);
+    trayBase.position.set(0.0, -0.36, -0.15);
+    trayBase.receiveShadow = true;
+    root.add(trayBase);
+
+    [-trayWidth / 2, trayWidth / 2].forEach((x) => {
+      const side = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.38, trayLen), steelMat);
+      side.position.set(x, -0.18, -0.15);
+      root.add(side);
+    });
+
+    if (perforated) {
+      // Ranures de ventilació (perforacions) sobre la base de la safata
+      const slotMat = new THREE.MeshBasicMaterial({ color: 0x0b1120 });
+      for (let zi = -1.7; zi <= 1.5; zi += 0.4) {
+        for (let xi = -0.55; xi <= 0.55; xi += 0.36) {
+          const slot = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.072, 0.16), slotMat);
+          slot.position.set(xi, -0.36, zi);
+          root.add(slot);
+        }
+      }
+    }
+  };
+
   if (method === 'A1' || method === 'A2') {
-    // Paret tèrmicament aïllant (pladur + llana mineral groga + muntant metàl·lic)
+    // Paret tèrmicament aïllant (pladur + llana mineral groga)
+    const directCable = method === 'A1' && variant === 'directe';
     const plasterMat = new THREE.MeshStandardMaterial({
       color: 0xe2e8f0,
       roughness: 0.85,
@@ -408,180 +662,121 @@ function buildInstallationScene(
     frontBoard.position.set(0.75, 0, -0.2);
     root.add(frontBoard);
 
-    // Llana mineral tèrmica a l'interior
+    // Llana mineral que omple la cambra, buidada només al pas del tub o del cable
     const woolMat = new THREE.MeshStandardMaterial({
       map: textures.wool,
       roughness: 0.95,
       transparent: true,
       opacity: cutaway ? 0.38 : 0.86,
     });
-    const woolTop = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.05, wallLength - 0.05), woolMat);
-    woolTop.position.set(0, 1.05, -0.2);
-    root.add(woolTop);
+    const wool = new THREE.Mesh(
+      createSlabWithConduitPassage(-0.66, 0.66, -wallHeight / 2, wallHeight / 2, wallLength - 0.05, 0, 0, directCable ? 0.26 : 0.43),
+      woolMat
+    );
+    wool.position.z = -0.2;
+    root.add(wool);
 
-    const woolBottom = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.05, wallLength - 0.05), woolMat);
-    woolBottom.position.set(0, -1.05, -0.2);
-    root.add(woolBottom);
-
-    const woolSideL = new THREE.Mesh(new THREE.BoxGeometry(0.28, 1.05, wallLength - 0.05), woolMat);
-    woolSideL.position.set(-0.52, 0, -0.2);
-    root.add(woolSideL);
-
-    const woolSideR = new THREE.Mesh(new THREE.BoxGeometry(0.28, 1.05, wallLength - 0.05), woolMat);
-    woolSideR.position.set(0.52, 0, -0.2);
-    root.add(woolSideR);
-
-    // Tub corrugat encastat al centre de la llana mineral
-    const conduit = createConduit(cableLength - 0.4, 0.38, 0x334155, true, cutaway);
-    conduit.position.set(0, 0, -0.1);
-    root.add(conduit);
-
-    if (method === 'A1') {
-      addUnipolarBundle(root, 0.14, 0.075, 0, 0);
-    } else {
+    if (directCable) {
+      // A1: mànega encastada directament en contacte amb l'aïllament tèrmic
       const cable = createMulticoreCable(cableLength, 0.25, phase, metalMat, textures.pe);
       cable.position.set(0, 0, 0.15);
       root.add(cable);
-    }
-  } else if (method === 'B1' || method === 'B2') {
-    // Paret d'obra de maó + arrebossat gris
-    const wallMat = new THREE.MeshStandardMaterial({
-      map: textures.brick,
-      roughness: 0.85,
-      transparent: cutaway,
-      opacity: cutaway ? 0.45 : 1,
-    });
-    // B1: el tub va en una regata; la paret i l'arrebossat es buiden al pas del tub
-    // (radi del tub 0,38 + anelles corrugades) perquè a l'interior només hi hagi cables.
-    const b1Groove = { cx: -0.12, cy: 0, r: 0.43 };
-    const wall = new THREE.Mesh(
-      method === 'B1'
-        ? createSlabWithConduitPassage(-1.3, -0.2, -wallHeight / 2, wallHeight / 2, wallLength, b1Groove.cx, b1Groove.cy, b1Groove.r)
-        : new THREE.BoxGeometry(1.1, wallHeight, wallLength),
-      wallMat
-    );
-    if (method === 'B1') wall.position.set(0, 0, -0.2);
-    else wall.position.set(-0.75, 0, -0.2);
-    wall.receiveShadow = true;
-    root.add(wall);
-
-    // Capa de guix/arrebossat frontal
-    const plaster = new THREE.Mesh(
-      method === 'B1'
-        ? createSlabWithConduitPassage(-0.21, -0.09, -wallHeight / 2, wallHeight / 2, wallLength, b1Groove.cx, b1Groove.cy, b1Groove.r)
-        : new THREE.BoxGeometry(0.12, wallHeight, wallLength),
-      new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.9, transparent: cutaway, opacity: cutaway ? 0.3 : 1 })
-    );
-    if (method === 'B1') plaster.position.set(0, 0, -0.2);
-    else plaster.position.set(-0.15, 0, -0.2);
-    root.add(plaster);
-
-    if (method === 'B1') {
-      // Tub encastat parcialment en regata a la paret d'obra
-      const conduit = createConduit(cableLength - 0.4, 0.38, 0x475569, true, cutaway);
-      conduit.position.set(-0.12, 0, -0.1);
-      root.add(conduit);
-      addUnipolarBundle(root, 0.14, 0.075, -0.12, 0);
     } else {
-      // B2: Tub rígid en muntatge superficial sobre paret amb abraçadores
-      const conduit = createConduit(cableLength - 0.4, 0.36, 0x94a3b8, false, cutaway);
-      conduit.position.set(0.29, 0, -0.1);
+      // Tub corrugat encastat al centre de la llana mineral
+      const conduit = createConduit(cableLength - 0.4, 0.38, 0x334155, true, cutaway);
+      conduit.position.set(0, 0, -0.1);
       root.add(conduit);
 
-      // Abraçadores metàl·liques
-      const clampMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.65, roughness: 0.35 });
-      [-1.3, 0, 1.3].forEach((z) => {
-        const clamp = new THREE.Mesh(new THREE.TorusGeometry(0.39, 0.04, 10, 24), clampMat);
-        clamp.position.set(0.29, 0, z);
-        root.add(clamp);
-        const foot = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.95, 0.14), clampMat);
-        foot.position.set(-0.04, 0, z);
-        root.add(foot);
-      });
-
-      const cable = createMulticoreCable(cableLength, 0.25, phase, metalMat, textures.pe);
-      cable.position.set(0.29, 0, 0.15);
-      root.add(cable);
-    }
-  } else if (method === 'C') {
-    // Paret d'obra + cable multiconductor fixat directament a la paret amb grapes
-    const wall = new THREE.Mesh(
-      new THREE.BoxGeometry(1.0, wallHeight, wallLength),
-      new THREE.MeshStandardMaterial({ map: textures.brick, roughness: 0.85 })
-    );
-    wall.position.set(-0.85, 0, -0.2);
-    wall.receiveShadow = true;
-    root.add(wall);
-
-    const plaster = new THREE.Mesh(
-      new THREE.BoxGeometry(0.14, wallHeight, wallLength),
-      new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.88 })
-    );
-    plaster.position.set(-0.28, 0, -0.2);
-    root.add(plaster);
-
-    const cable = createMulticoreCable(cableLength, 0.3, phase, metalMat, textures.pe);
-    cable.position.set(0.09, 0, 0.15);
-    root.add(cable);
-
-    // Grapes / abraçadores directes a paret
-    const clipMat = new THREE.MeshStandardMaterial({ color: 0xd1d5db, roughness: 0.4, metalness: 0.4 });
-    [-1.4, -0.2, 1.0].forEach((z) => {
-      const clip = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.045, 10, 24, Math.PI * 1.15), clipMat);
-      clip.rotation.z = -Math.PI * 0.58;
-      clip.position.set(0.09, 0, z);
-      root.add(clip);
-    });
-  } else if (method === 'E' || method === 'F') {
-    // Paret posterior + mènsules + safata perforada galvanitzada
-    const wall = new THREE.Mesh(
-      new THREE.BoxGeometry(0.5, wallHeight, wallLength),
-      new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.85 })
-    );
-    wall.position.set(-1.75, 0, -0.2);
-    root.add(wall);
-
-    const steelMat = new THREE.MeshStandardMaterial({
-      color: 0x94a3b8,
-      metalness: 0.72,
-      roughness: 0.32,
-    });
-
-    // Mènsules suport a paret
-    [-1.3, 1.1].forEach((z) => {
-      const bracket = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.12, 0.16), steelMat);
-      bracket.position.set(-0.35, -0.45, z);
-      root.add(bracket);
-      const plate = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.75, 0.24), steelMat);
-      plate.position.set(-1.46, -0.45, z);
-      root.add(plate);
-    });
-
-    // Safata perforada (base + ales laterals + ranures fosques visibles)
-    const trayWidth = 1.65;
-    const trayLen = 4.1;
-    const trayBase = new THREE.Mesh(new THREE.BoxGeometry(trayWidth, 0.06, trayLen), steelMat);
-    trayBase.position.set(0.0, -0.36, -0.15);
-    trayBase.receiveShadow = true;
-    root.add(trayBase);
-
-    const sideL = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.38, trayLen), steelMat);
-    sideL.position.set(-trayWidth / 2, -0.18, -0.15);
-    root.add(sideL);
-
-    const sideR = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.38, trayLen), steelMat);
-    sideR.position.set(trayWidth / 2, -0.18, -0.15);
-    root.add(sideR);
-
-    // Ranures de ventilació (perforacions) sobre la base de la safata
-    const slotMat = new THREE.MeshBasicMaterial({ color: 0x0b1120 });
-    for (let zi = -1.7; zi <= 1.5; zi += 0.4) {
-      for (let xi = -0.55; xi <= 0.55; xi += 0.36) {
-        const slot = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.072, 0.16), slotMat);
-        slot.position.set(xi, -0.36, zi);
-        root.add(slot);
+      if (method === 'A1') {
+        addUnipolarBundle(root, 0.14, 0.075, 0, 0);
+      } else {
+        const cable = createMulticoreCable(cableLength, 0.25, phase, metalMat, textures.pe);
+        cable.position.set(0, 0, 0.15);
+        root.add(cable);
       }
     }
+  } else if (method === 'B1' || method === 'B2') {
+    // B1 = conductors unipolars · B2 = mànega multiconductor; la canalització depèn de la modalitat
+    const addCables = (x: number) => {
+      if (method === 'B1') {
+        addUnipolarBundle(root, 0.14, 0.075, x, 0);
+      } else {
+        const cable = createMulticoreCable(cableLength, 0.25, phase, metalMat, textures.pe);
+        cable.position.set(x, 0, 0.15);
+        root.add(cable);
+      }
+    };
+
+    if (variant === 'superficial') {
+      addMasonryWall();
+      addCables(addSurfaceConduit());
+    } else if (variant === 'canal') {
+      addMasonryWall();
+      addCables(addTrunking());
+    } else {
+      // Encastat: tub corrugat en regata; paret i arrebossat buidats al pas del tub
+      // (radi del tub 0,38 + anelles corrugades) perquè a l'interior només hi hagi cables.
+      const groove = { cx: -0.12, cy: 0, r: 0.43 };
+      addMasonryWall(groove);
+      const conduit = createConduit(cableLength - 0.4, 0.38, 0x475569, true, cutaway);
+      conduit.position.set(groove.cx, 0, -0.1);
+      root.add(conduit);
+      addCables(groove.cx);
+    }
+  } else if (method === 'C') {
+    if (variant === 'safata') {
+      // Cable multiconductor sobre safata NO perforada (base contínua, sense ventilació inferior)
+      addCableTray(false);
+      const cable = createMulticoreCable(cableLength, 0.3, phase, metalMat, textures.pe);
+      cable.position.set(0, -0.03, 0.15);
+      root.add(cable);
+    } else if (variant === 'encastat') {
+      // Cable encastat directament a l'obra, sense tub (la paret es buida només al pas del cable)
+      const pass = { cx: -0.55, cy: 0, r: 0.31 };
+      addMasonryWall(pass);
+      const cable = createMulticoreCable(cableLength, 0.3, phase, metalMat, textures.pe);
+      cable.position.set(pass.cx, 0, 0.15);
+      root.add(cable);
+    } else {
+      // Cable multiconductor fixat directament a la paret amb grapes
+      addMasonryWall();
+      const x = -0.08 + 0.3;
+      const cable = createMulticoreCable(cableLength, 0.3, phase, metalMat, textures.pe);
+      cable.position.set(x, 0, 0.15);
+      root.add(cable);
+
+      const clipMat = new THREE.MeshStandardMaterial({ color: 0xd1d5db, roughness: 0.4, metalness: 0.4 });
+      [-1.4, -0.2, 1.0].forEach((z) => {
+        const clip = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.045, 10, 24, Math.PI * 1.15), clipMat);
+        clip.rotation.z = -Math.PI * 0.58;
+        clip.position.set(x, 0, z);
+        root.add(clip);
+      });
+    }
+  } else if (method === 'E' && variant === 'paret') {
+    // E: cable multiconductor separat de la paret ≥ 0,3·D amb suports distanciadors
+    addBackWall();
+    const r = 0.33;
+    const x = -1.5 + 0.47 + r; // separació lliure 0,47 ≥ 0,3·D
+    const cable = createMulticoreCable(cableLength, r, phase, metalMat, textures.pe);
+    cable.position.set(x, 0, 0.15);
+    root.add(cable);
+
+    [-1.3, 0.1, 1.4].forEach((z) => {
+      const base = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.32, 0.22), steelMat);
+      base.position.set(-1.46, 0, z);
+      const rod = new THREE.Mesh(new THREE.BoxGeometry(0.47, 0.07, 0.07), steelMat);
+      rod.position.set(-1.5 + 0.47 / 2, 0, z);
+      const collar = new THREE.Mesh(new THREE.TorusGeometry(r + 0.03, 0.035, 10, 28), steelMat);
+      collar.position.set(x, 0, z);
+      root.add(base, rod, collar);
+    });
+
+    root.add(
+      createDimensionIndicator(new THREE.Vector3(-1.48, 0, 1.85), new THREE.Vector3(-1.5 + 0.47, 0, 1.85), 0x38bdf8)
+    );
+  } else if (method === 'E' || method === 'F') {
+    addCableTray(true);
 
     if (method === 'E') {
       // Cable multiconductor sobre safata perforada, separat de paret >= 0.3D
@@ -597,21 +792,29 @@ function buildInstallationScene(
       );
       root.add(dim);
     } else {
-      // F: Cables unipolars en contacte mutu (en trèvol per 3x, junts per 2x)
+      // F: Cables unipolars en contacte mutu (en trèvol o en pla per 3x, junts per 2x)
       const r = 0.23;
+      const yBase = -0.33 + r;
       if (phase === 'trifasic') {
+        const flat = variant === 'pla';
         const c1 = createWireMesh(cableLength, r, 0x7c4a2d, metalMat, textures.pe);
-        c1.position.set(-r, -0.33 + r, 0.15);
         const c2 = createWireMesh(cableLength, r, 0x1f242c, metalMat, textures.pe);
-        c2.position.set(r, -0.33 + r, 0.15);
         const c3 = createWireMesh(cableLength, r, 0x94a3b8, metalMat, textures.pe);
-        c3.position.set(0, -0.33 + r + r * Math.sqrt(3), 0.15);
+        if (flat) {
+          c1.position.set(-2 * r, yBase, 0.15);
+          c2.position.set(0, yBase, 0.15);
+          c3.position.set(2 * r, yBase, 0.15);
+        } else {
+          c1.position.set(-r, yBase, 0.15);
+          c2.position.set(r, yBase, 0.15);
+          c3.position.set(0, yBase + r * Math.sqrt(3), 0.15);
+        }
         root.add(c1, c2, c3);
       } else {
         const c1 = createWireMesh(cableLength, r, 0x7c4a2d, metalMat, textures.pe);
-        c1.position.set(-r, -0.33 + r, 0.15);
+        c1.position.set(-r, yBase, 0.15);
         const c2 = createWireMesh(cableLength, r, 0x2563eb, metalMat, textures.pe);
-        c2.position.set(r, -0.33 + r, 0.15);
+        c2.position.set(r, yBase, 0.15);
         root.add(c1, c2);
       }
       // Indicador de separació a paret >= D
@@ -734,12 +937,29 @@ function buildInstallationScene(
     );
   }
 
+  // Mapa tèrmic: l'aïllament i la coberta dels cables prenen el color de la temperatura estimada
+  if (thermal) {
+    const heatMat = new THREE.MeshStandardMaterial({
+      color: thermal.color,
+      emissive: thermal.color,
+      emissiveIntensity: thermal.glow,
+      roughness: 0.5,
+      metalness: 0.05,
+    });
+    root.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh && o.userData.thermal) (o as THREE.Mesh).material = heatMat;
+    });
+  }
+
   return root;
 }
 
 export const Installation3DViewer: React.FC<Installation3DViewerProps> = ({
   selectedMethod,
   onSelectMethod,
+  calcContext,
+  onClearCalcContext,
+  onCalculateWithMethod,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -747,11 +967,47 @@ export const Installation3DViewer: React.FC<Installation3DViewerProps> = ({
   const sceneGroupRef = useRef<THREE.Group | null>(null);
   const autoRotateRef = useRef<boolean>(false);
 
-  const [phase, setPhase] = useState<PhaseSystem>('trifasic');
-  const [material, setMaterial] = useState<ConductorMaterial>('Cu');
+  const [phase, setPhase] = useState<PhaseSystem>(calcContext?.phase ?? 'trifasic');
+  const [material, setMaterial] = useState<ConductorMaterial>(calcContext?.material ?? 'Cu');
+  const [thermalOn, setThermalOn] = useState<boolean>(Boolean(calcContext));
+  const [insulation, setInsulation] = useState<InsulationType>(calcContext?.insulation ?? 'XLPE');
+  const [ibA, setIbA] = useState<number>(calcContext?.serviceCurrentA ?? 60);
+  const [section, setSection] = useState<StandardSection>(calcContext?.section ?? 16);
   const [cutaway, setCutaway] = useState<boolean>(true);
   const [autoRotate, setAutoRotate] = useState<boolean>(false);
   const [activePreset, setActivePreset] = useState<CameraPreset>('iso');
+  const [variantByMethod, setVariantByMethod] = useState<Partial<Record<InstallationMethodId, string>>>({});
+
+  const variants = METHOD_VARIANTS[selectedMethod];
+  const activeVariant = variants?.find((v) => v.id === variantByMethod[selectedMethod]) ?? variants?.[0];
+  const activeVariantId = activeVariant?.id;
+  const selectVariant = (id: string) => setVariantByMethod((prev) => ({ ...prev, [selectedMethod]: id }));
+
+  /**
+   * Temperatura estimada del conductor (mateix model que la calculadora, GUÍA-BT-ANEXO 2):
+   * T ≈ T_amb + (T_màx − T_amb)·(I_b / I_z)², amb I_z = I_taula·K_t·K_g
+   */
+  const estimateThermal = (m: InstallationMethodId): ThermalEstimate => {
+    const meth = INSTALLATION_METHODS[m];
+    const effPhase: PhaseSystem = m === 'G' ? 'trifasic' : phase;
+    const effIns: InsulationType = m === 'D' ? 'XLPE' : insulation;
+    const ambient =
+      calcContext && INSTALLATION_METHODS[calcContext.method].isBuried === meth.isBuried ? calcContext.ambientTemp : meth.refTemp;
+    const tMax = INSULATIONS[effIns].maxTemp;
+    const itab = lookupBaseAmpacity(section, material, m, effPhase, effIns).ampacity;
+    const kt = getTempCorrectionFactor(ambient, effIns, meth.isBuried);
+    const kg = getGroupingFactor(m, calcContext?.groupedCircuits ?? 1).factor;
+    if (itab === null || kt <= 0) {
+      return { available: false, ambient, tMax, itab, kt, kg, iz: 0, ratio: 0, temp: 0, t: 0 };
+    }
+    const iz = itab * kt * kg;
+    const ratio = ibA / iz;
+    const temp = ambient + (tMax - ambient) * ratio * ratio;
+    return { available: true, ambient, tMax, itab, kt, kg, iz, ratio, temp, t: (temp - ambient) / (tMax - ambient) };
+  };
+
+  const thermal = estimateThermal(selectedMethod);
+  const thermalVisual = thermalOn && thermal.available ? thermal.t : null;
 
   const texturesRef = useRef<{ pe: THREE.Texture; brick: THREE.Texture; wool: THREE.Texture } | null>(null);
 
@@ -864,9 +1120,13 @@ export const Installation3DViewer: React.FC<Installation3DViewerProps> = ({
     }
 
     const effectivePhase: PhaseSystem = selectedMethod === 'G' ? 'trifasic' : phase;
-    const built = buildInstallationScene(selectedMethod, effectivePhase, material, cutaway, textures);
+    const heat =
+      thermalVisual === null
+        ? null
+        : { color: heatColor(thermalVisual), glow: 0.25 + 0.45 * Math.min(thermalVisual, HEAT_MAX_T) };
+    const built = buildInstallationScene(selectedMethod, effectivePhase, material, cutaway, textures, activeVariantId, heat);
     group.add(built);
-  }, [selectedMethod, phase, material, cutaway]);
+  }, [selectedMethod, phase, material, cutaway, activeVariantId, thermalVisual]);
 
   const applyCameraPreset = (preset: CameraPreset) => {
     setActivePreset(preset);
@@ -888,6 +1148,11 @@ export const Installation3DViewer: React.FC<Installation3DViewerProps> = ({
       return { method: m, code: INSTALLATION_METHODS[m].shortCode, amp };
     });
   }, [material]);
+
+  // Mateix I_b i secció en tots els mètodes: com canvia la temperatura del conductor
+  const thermalBars = thermalOn
+    ? METHOD_ORDER.map((m) => ({ method: m, code: INSTALLATION_METHODS[m].shortCode, est: estimateThermal(m) }))
+    : null;
 
   const maxComparisonAmp = Math.max(...comparisonBars.map((b) => b.amp), 1);
 
@@ -922,7 +1187,59 @@ export const Installation3DViewer: React.FC<Installation3DViewerProps> = ({
               <div className="canvas-hud-pill" style={{ fontSize: '0.72rem', color: '#cbd5e1' }}>
                 Arrossega per girar · Roda per fer zoom
               </div>
+
+              {/* Modalitats del mètode (p. ex. B2: tub superficial o encastat) */}
+            {variants && (
+              <div className="canvas-variant-bar">
+                <span className="canvas-variant-label">Modalitat</span>
+                <div className="hud-btn-group">
+                  {variants.map((v) => (
+                    <button
+                      key={v.id}
+                      className={`hud-btn ${activeVariantId === v.id ? 'active' : ''}`}
+                      onClick={() => selectVariant(v.id)}
+                      title={v.description}
+                    >
+                      {v.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             </div>
+
+            {/* Llegenda del mapa tèrmic */}
+            {thermalOn && (
+              <div className="heat-legend">
+                {thermal.available ? (
+                  <>
+                    <div className="heat-legend-title">
+                      <Thermometer size={13} /> T ≈ <strong>{thermal.temp.toFixed(0)} °C</strong>
+                      <span style={{ color: thermal.ratio > 1 ? '#f0abfc' : '#94a3b8' }}>
+                        {thermal.ratio > 1 ? ' · supera T_màx!' : ` · I_b/I_z = ${(thermal.ratio * 100).toFixed(0)} %`}
+                      </span>
+                    </div>
+                    <div className="heat-legend-bar" style={{ background: HEAT_GRADIENT_CSS }}>
+                      <span className="heat-legend-tick" style={{ left: `${(1 / HEAT_MAX_T) * 100}%` }} />
+                      <span
+                        className="heat-legend-marker"
+                        style={{ left: `${(Math.min(thermal.t, HEAT_MAX_T) / HEAT_MAX_T) * 100}%` }}
+                      />
+                    </div>
+                    <div className="heat-legend-scale">
+                      <span>{thermal.ambient} °C</span>
+                      <span style={{ marginLeft: 'auto', marginRight: `${(1 - 1 / HEAT_MAX_T) * 100 - 6}%` }}>
+                        T_màx {thermal.tMax} °C
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="heat-legend-title">
+                    <Thermometer size={13} /> Sense valor a la taula per a {ts(section).replace('{,}', ',')} mm² en {info.shortCode}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Bottom Controls HUD */}
             <div className="canvas-controls-bar">
@@ -956,59 +1273,97 @@ export const Installation3DViewer: React.FC<Installation3DViewerProps> = ({
             </div>
           </div>
 
-          {/* Comparativa visual de dissipació tèrmica */}
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">
-                <Flame size={17} color="var(--copper)" />
-                Impacte del mètode en la intensitat admissible (25 mm² · {material === 'Cu' ? 'Coure' : 'Alumini'} · 3x XLPE)
-              </h3>
-              <span className="badge badge-slate">40 °C aire / 25 °C terreny</span>
+          {/* Comparativa visual de dissipació tèrmica (o temperatura per mètode si el mapa tèrmic és actiu) */}
+          {thermalBars ? (
+            <div className="card">
+              <div className="card-header">
+                <h3 className="card-title">
+                  <Thermometer size={17} color="var(--copper)" />
+                  Temperatura del conductor segons el mètode (I_b = {ibA.toFixed(1).replace('.', ',')} A · {ts(section).replace('{,}', ',')} mm² · {material})
+                </h3>
+                <span className="badge badge-slate">Mateixa càrrega, diferent dissipació</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                {thermalBars.map(({ method: m, code, est }) => {
+                  const isSelected = m === selectedMethod;
+                  const pct = est.available ? (Math.min(est.t, HEAT_MAX_T) / HEAT_MAX_T) * 100 : 0;
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => onSelectMethod(m)}
+                      className={`compare-row ${isSelected ? 'selected' : ''}`}
+                    >
+                      <span className="mono compare-code">{code}</span>
+                      <div className="meter-track" style={{ height: 11, position: 'relative' }}>
+                        <div className="meter-fill" style={{ width: `${pct}%`, background: `#${heatColor(est.t).getHexString()}` }} />
+                        <span className="heat-limit-tick" style={{ left: `${(1 / HEAT_MAX_T) * 100}%` }} title="T_màx" />
+                      </div>
+                      <span className="mono" style={{ fontSize: '0.8rem', fontWeight: 700, textAlign: 'right', color: est.available && est.ratio > 1 ? '#c026d3' : undefined }}>
+                        {est.available ? `${est.temp.toFixed(0)} °C` : '—'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: '0.74rem', color: 'var(--ink-muted)', marginTop: '0.55rem' }}>
+                La marca vertical indica T_màx de l’aïllament. «—»: la taula no dona valor per a aquesta secció i mètode.
+              </div>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
-              {comparisonBars.map((b) => {
-                const isSelected = b.method === selectedMethod;
-                const pct = (b.amp / maxComparisonAmp) * 100;
-                return (
-                  <button
-                    key={b.method}
-                    type="button"
-                    onClick={() => onSelectMethod(b.method)}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '98px 1fr 58px',
-                      alignItems: 'center',
-                      gap: '0.65rem',
-                      padding: '0.3rem 0.45rem',
-                      borderRadius: '7px',
-                      border: isSelected ? '1px solid var(--blue)' : '1px solid transparent',
-                      background: isSelected ? 'var(--blue-soft)' : 'transparent',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                    }}
-                  >
-                    <span className="mono" style={{ fontSize: '0.8rem', fontWeight: isSelected ? 800 : 600, color: isSelected ? 'var(--blue)' : 'var(--ink)' }}>
-                      {b.code}
-                    </span>
-                    <div className="meter-track" style={{ height: 11 }}>
-                      <div
-                        className="meter-fill"
-                        style={{
-                          width: `${pct}%`,
-                          background: isSelected
-                            ? 'linear-gradient(90deg, #1d4ed8, #3b82f6)'
-                            : 'linear-gradient(90deg, #c2591a, #ea580c)',
-                        }}
-                      />
-                    </div>
-                    <span className="mono" style={{ fontSize: '0.8rem', fontWeight: 700, textAlign: 'right' }}>
-                      {b.amp} A
-                    </span>
-                  </button>
-                );
-              })}
+          ) : (
+            <div className="card">
+              <div className="card-header">
+                <h3 className="card-title">
+                  <Flame size={17} color="var(--copper)" />
+                  Impacte del mètode en la intensitat admissible (25 mm² · {material === 'Cu' ? 'Coure' : 'Alumini'} · 3x XLPE)
+                </h3>
+                <span className="badge badge-slate">40 °C aire / 25 °C terreny</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                {comparisonBars.map((b) => {
+                  const isSelected = b.method === selectedMethod;
+                  const pct = (b.amp / maxComparisonAmp) * 100;
+                  return (
+                    <button
+                      key={b.method}
+                      type="button"
+                      onClick={() => onSelectMethod(b.method)}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '98px 1fr 58px',
+                        alignItems: 'center',
+                        gap: '0.65rem',
+                        padding: '0.3rem 0.45rem',
+                        borderRadius: '7px',
+                        border: isSelected ? '1px solid var(--blue)' : '1px solid transparent',
+                        background: isSelected ? 'var(--blue-soft)' : 'transparent',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                      }}
+                    >
+                      <span className="mono" style={{ fontSize: '0.8rem', fontWeight: isSelected ? 800 : 600, color: isSelected ? 'var(--blue)' : 'var(--ink)' }}>
+                        {b.code}
+                      </span>
+                      <div className="meter-track" style={{ height: 11 }}>
+                        <div
+                          className="meter-fill"
+                          style={{
+                            width: `${pct}%`,
+                            background: isSelected
+                              ? 'linear-gradient(90deg, #1d4ed8, #3b82f6)'
+                              : 'linear-gradient(90deg, #c2591a, #ea580c)',
+                          }}
+                        />
+                      </div>
+                      <span className="mono" style={{ fontSize: '0.8rem', fontWeight: 700, textAlign: 'right' }}>
+                        {b.amp} A
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Right: Method Selector & Technical Details */}
@@ -1096,6 +1451,145 @@ export const Installation3DViewer: React.FC<Installation3DViewerProps> = ({
             </div>
           </div>
 
+          {/* Mapa tèrmic del conductor */}
+          <div className="card">
+            <div className="card-header" style={{ marginBottom: thermalOn ? '0.7rem' : 0 }}>
+              <h2 className="card-title">
+                <Thermometer size={17} color="var(--copper)" />
+                Mapa tèrmic del conductor
+              </h2>
+              <button
+                type="button"
+                className={`btn btn-sm ${thermalOn ? 'btn-primary' : 'btn-outline'}`}
+                onClick={() => setThermalOn((v) => !v)}
+                aria-pressed={thermalOn}
+              >
+                {thermalOn ? 'Activat' : 'Activar'}
+              </button>
+            </div>
+
+            {!thermalOn && (
+              <p style={{ margin: '0.5rem 0 0', fontSize: '0.8rem', color: 'var(--ink-secondary)' }}>
+                Pinta els cables segons la temperatura que assoleixen amb una càrrega donada i compara com dissipa la calor cada mètode.
+              </p>
+            )}
+
+            {thermalOn && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+                {calcContext && (
+                  <div className="alert alert-blue" style={{ fontSize: '0.78rem', alignItems: 'center' }}>
+                    <span style={{ flex: 1 }}>
+                      Cas de {calcContext.source === 'calculadora' ? 'la calculadora' : 'l’exercici'}: mètode{' '}
+                      <strong>{INSTALLATION_METHODS[calcContext.method].shortCode}</strong>, I_b ={' '}
+                      <strong>{calcContext.serviceCurrentA.toFixed(1).replace('.', ',')} A</strong>, S ={' '}
+                      <strong>{ts(calcContext.section).replace('{,}', ',')} mm²</strong>
+                      {calcContext.groupedCircuits > 1 && `, ${calcContext.groupedCircuits} circuits agrupats`}.
+                    </span>
+                    {onClearCalcContext && (
+                      <button type="button" className="btn btn-outline btn-sm" onClick={onClearCalcContext} title="Treu les dades del càlcul (temperatura i agrupació)">
+                        Descartar
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <div className="form-row">
+                  <div className="field-group">
+                    <label className="field-label" htmlFor="thermal-ib">
+                      <span>Intensitat I_b (A)</span>
+                    </label>
+                    <input
+                      id="thermal-ib"
+                      type="number"
+                      className="input mono"
+                      min={0.5}
+                      step={0.5}
+                      value={Number(ibA.toFixed(2))}
+                      onChange={(e) => setIbA(Math.max(0.1, Number(e.target.value) || 0.1))}
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label className="field-label" htmlFor="thermal-section">
+                      <span>Secció (mm²)</span>
+                    </label>
+                    <select
+                      id="thermal-section"
+                      className="select mono"
+                      value={section}
+                      onChange={(e) => setSection(Number(e.target.value) as StandardSection)}
+                    >
+                      {STANDARD_SECTIONS.map((sec) => (
+                        <option key={sec} value={sec}>
+                          {ts(sec).replace('{,}', ',')} mm²
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={Math.max(20, Math.ceil((thermal.available ? thermal.iz : ibA) * 1.4))}
+                  step={0.5}
+                  value={ibA}
+                  onChange={(e) => setIbA(Number(e.target.value))}
+                  aria-label="Intensitat de servei"
+                  style={{ width: '100%', accentColor: 'var(--copper)' }}
+                />
+
+                <div className="segmented">
+                  {(['PVC', 'XLPE'] as InsulationType[]).map((insId) => (
+                    <button
+                      key={insId}
+                      className={`seg-btn ${(selectedMethod === 'D' ? 'XLPE' : insulation) === insId ? 'active' : ''}`}
+                      onClick={() => setInsulation(insId)}
+                      disabled={selectedMethod === 'D' && insId === 'PVC'}
+                    >
+                      {INSULATIONS[insId].shortName}
+                    </button>
+                  ))}
+                </div>
+
+                {thermal.available ? (
+                  <>
+                    <div className="formula-box copper">
+                      <Tex block>{String.raw`I_z = I_{\text{taula}}\cdot K_t\cdot K_g`}</Tex>
+                      <Tex block>{String.raw`I_z = ${thermal.itab}\cdot ${tn(thermal.kt)}\cdot ${tn(thermal.kg)} = ${tn(thermal.iz, 1)}\ \text{A}`}</Tex>
+                      <Tex block>{String.raw`T \approx T_{\text{amb}} + (T_{\text{màx}} - T_{\text{amb}})\left(\dfrac{I_b}{I_z}\right)^{2}`}</Tex>
+                      <Tex block>{String.raw`T \approx ${thermal.ambient} + ${thermal.tMax - thermal.ambient}\cdot\left(\dfrac{${tn(ibA, 1)}}{${tn(thermal.iz, 1)}}\right)^{2} = \hl{${tn(thermal.temp, 1)}\ ^{\circ}\text{C}}`}</Tex>
+                      <dl className="formula-legend">
+                        <dt><Tex>T</Tex></dt>
+                        <dd>Temperatura estimada del conductor en servei (°C)</dd>
+                        <dt><Tex>{String.raw`T_{\text{amb}}`}</Tex></dt>
+                        <dd>Temperatura {INSTALLATION_METHODS[selectedMethod].isBuried ? 'del terreny' : 'de l’aire'}: {thermal.ambient} °C</dd>
+                        <dt><Tex>{String.raw`T_{\text{màx}}`}</Tex></dt>
+                        <dd>Temperatura màxima admissible de l’aïllament: {thermal.tMax} °C</dd>
+                        <dt><Tex>I_z</Tex></dt>
+                        <dd>Intensitat admissible del cable en aquest mètode, amb correccions (A)</dd>
+                        <dt><Tex>I_b</Tex></dt>
+                        <dd>Intensitat que hi circula (A)</dd>
+                      </dl>
+                    </div>
+                    <div className={`alert ${thermal.ratio > 1 ? 'alert-red' : thermal.t > 0.85 ? 'alert-amber' : 'alert-emerald'}`} style={{ fontSize: '0.8rem' }}>
+                      <span>
+                        {thermal.ratio > 1
+                          ? `Sobrecàrrega: I_b supera I_z en un ${((thermal.ratio - 1) * 100).toFixed(0)} %. L’aïllament treballaria per sobre de ${thermal.tMax} °C i s’envelliria ràpidament: cal més secció o un mètode amb millor dissipació.`
+                          : `El conductor treballa al ${(thermal.ratio * 100).toFixed(0)} % de la seva capacitat, amb un marge de ${(thermal.tMax - thermal.temp).toFixed(0)} °C fins a T_màx.`}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="alert alert-amber" style={{ fontSize: '0.8rem' }}>
+                    <span>
+                      La taula no dona intensitat admissible per a {ts(section).replace('{,}', ',')} mm² en el mètode {info.shortCode}
+                      {selectedMethod === 'G' ? ' (el mètode G comença a 25 mm²)' : ''}. Tria una altra secció.
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Detall tècnic del mètode seleccionat */}
           <div className="card">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.55rem' }}>
@@ -1110,13 +1604,46 @@ export const Installation3DViewer: React.FC<Installation3DViewerProps> = ({
               {info.summary}
             </p>
 
+            {variants && activeVariant && (
+              <div style={{ marginBottom: '0.8rem' }}>
+                <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--ink)', marginBottom: '0.35rem' }}>
+                  Modalitat representada en 3D ({variants.length} disponibles):
+                </div>
+                <div className="segmented" style={{ flexWrap: 'wrap' }}>
+                  {variants.map((v) => (
+                    <button
+                      key={v.id}
+                      className={`seg-btn ${activeVariantId === v.id ? 'active' : ''}`}
+                      onClick={() => selectVariant(v.id)}
+                    >
+                      {v.label}
+                    </button>
+                  ))}
+                </div>
+                <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', color: 'var(--ink-secondary)' }}>{activeVariant.description}</p>
+              </div>
+            )}
+
             <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--ink)', marginBottom: '0.35rem' }}>
               Sistemes inclosos (Tabla B · GUÍA-BT-19):
             </div>
             <ul style={{ margin: 0, paddingLeft: '1.15rem', fontSize: '0.81rem', color: 'var(--ink-secondary)', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-              {info.examples.map((ex, i) => (
-                <li key={i}>{ex}</li>
-              ))}
+              {info.examples.map((ex, i) => {
+                const variantForExample = variants?.find((v) => v.exampleIndex === i);
+                const isShown = variantForExample !== undefined && variantForExample.id === activeVariantId;
+                return (
+                  <li key={i} style={isShown ? { color: 'var(--blue)', fontWeight: 700 } : undefined}>
+                    {variantForExample ? (
+                      <button type="button" className="example-link" onClick={() => selectVariant(variantForExample.id)} title="Veure aquesta modalitat en 3D">
+                        {ex}
+                      </button>
+                    ) : (
+                      ex
+                    )}
+                    {isShown && ' ← en 3D'}
+                  </li>
+                );
+              })}
             </ul>
 
             {info.notes && (
@@ -1132,7 +1659,19 @@ export const Installation3DViewer: React.FC<Installation3DViewerProps> = ({
               {selectedMethod === 'F' && ' · Línia blava = separació ≥ D a paret'}
               {selectedMethod === 'G' && ' · Línies verdes = separació ≥ D entre cables'}
               {selectedMethod === 'D' && ' · Línia taronja = profunditat 70 cm · Cinta groga = senyalització'}
+              {thermalOn && ' · Mapa tèrmic actiu: el color dels cables indica la temperatura'}
             </div>
+
+            {onCalculateWithMethod && (
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                style={{ marginTop: '0.85rem', width: '100%', justifyContent: 'center' }}
+                onClick={() => onCalculateWithMethod(selectedMethod)}
+              >
+                <Calculator size={14} /> Calcular una secció amb el mètode {info.shortCode}
+              </button>
+            )}
           </div>
         </div>
       </div>

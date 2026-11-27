@@ -168,3 +168,47 @@ describe('REBT ITC-BT-19 & GUÍA-BT-ANEXO 2 Calculation Engine', () => {
     expect(wrongGrade.score).toBeLessThan(5);
   });
 });
+
+describe('Coordinació amb la protecció (ITC-BT-22 · UNE-HD 60364-4-43)', () => {
+  const base = {
+    phase: 'monofasic' as const,
+    voltage: 230,
+    powerW: 5750,
+    cosPhi: 1.0,
+    lengthM: 10,
+    maxVoltageDropPct: 1,
+    material: 'Cu' as const,
+    insulation: 'PVC' as const,
+    method: 'B1' as const,
+    ambientTemp: 40,
+    groupedCircuits: 1,
+  };
+
+  it('tria automàticament la I_n mínima ≥ I_b i comprova I_b ≤ I_n ≤ I_z i I_2 ≤ 1,45·I_z', () => {
+    const res = calculateConductorSection(base);
+    const p = res.protection!;
+    expect(p.ratingA).toBe(25); // I_b = 25 A
+    expect(p.k).toBe(1.45);
+    expect(p.izA).toBe(36);
+    expect(p.cond1).toBe(true);
+    expect(p.cond2).toBe(true);
+    expect(p.complies).toBe(true);
+  });
+
+  it('detecta una I_n massa gran i proposa la secció necessària', () => {
+    const res = calculateConductorSection({ ...base, protectionRatingA: 40 });
+    const p = res.protection!;
+    expect(p.cond1).toBe(false);
+    expect(p.complies).toBe(false);
+    expect(p.requiredSection).toBe(10); // B1 PVC 2x: 10 mm² → 50 A ≥ 40 A
+  });
+
+  it('amb fusible gG aplica I_2 = 1,6·I_n', () => {
+    const res = calculateConductorSection({ ...base, protectionDevice: 'fusible' });
+    const p = res.protection!;
+    expect(p.ratingA).toBe(25);
+    expect(p.k).toBe(1.6);
+    expect(p.i2A).toBeCloseTo(40, 6);
+    expect(p.minIzA).toBeCloseTo(40 / 1.45, 6);
+  });
+});

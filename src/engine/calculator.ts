@@ -28,6 +28,48 @@ export interface CalculationInput {
   ambientTemp: number; // °C (40 aire / 25 terreny per defecte)
   groupedCircuits: number; // Nombre de circuits agrupats (1 = sense agrupació)
   useRealTempIteration?: boolean; // 2a iteració GUÍA-BT-ANEXO 2 fórmula [17]
+  protectionDevice?: ProtectionDevice; // Dispositiu de protecció contra sobrecàrregues (per defecte magnetotèrmic)
+  protectionRatingA?: number; // Intensitat nominal I_n triada (si no s'indica, la mínima normalitzada ≥ I_b)
+}
+
+export type ProtectionDevice = 'magnetotermic' | 'fusible';
+
+/** Intensitats nominals normalitzades (A) */
+export const PROTECTION_RATINGS: Record<ProtectionDevice, number[]> = {
+  // UNE-EN 60898 (fins a 125 A) i caixa emmotllada UNE-EN 60947-2 (> 125 A)
+  magnetotermic: [6, 10, 16, 20, 25, 32, 40, 50, 63, 80, 100, 125, 160, 200, 250, 320, 400, 500, 630],
+  // Fusibles gG (UNE-EN 60269)
+  fusible: [2, 4, 6, 10, 16, 20, 25, 32, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630],
+};
+
+/**
+ * Factor k de la intensitat convencional de funcionament I_2 = k·I_n:
+ * magnetotèrmic UNE-EN 60898 → 1,45 (caixa emmotllada UNE-EN 60947-2 → 1,3);
+ * fusible gG UNE-EN 60269 → 2,1 (I_n ≤ 4 A), 1,9 (4 < I_n < 16 A), 1,6 (I_n ≥ 16 A).
+ */
+export function conventionalTripFactor(device: ProtectionDevice, ratingA: number): number {
+  if (device === 'magnetotermic') return ratingA <= 125 ? 1.45 : 1.3;
+  if (ratingA <= 4) return 2.1;
+  if (ratingA < 16) return 1.9;
+  return 1.6;
+}
+
+/** Coordinació conductor–protecció contra sobrecàrregues (ITC-BT-22 · UNE-HD 60364-4-43, 433.1) */
+export interface ProtectionCheck {
+  device: ProtectionDevice;
+  ratingA: number | null; // I_n (null si no n'hi ha cap de normalitzada ≥ I_b)
+  autoSelected: boolean;
+  serviceCurrentA: number; // I_b
+  izA: number; // I_z: intensitat admissible efectiva del conductor
+  k: number;
+  i2A: number; // I_2 = k·I_n
+  cond1: boolean; // I_b ≤ I_n ≤ I_z
+  cond2: boolean; // I_2 ≤ 1,45·I_z
+  complies: boolean;
+  /** Secció mínima que compleix la coordinació amb aquesta I_n (null si cap secció de la taula ho permet) */
+  requiredSection: StandardSection | null;
+  requiredIzA: number | null; // I_z d'aquesta secció
+  minIzA: number; // I_z mínima necessària = max(I_n, I_2/1,45)
 }
 
 export interface RealTempCheck {
@@ -87,6 +129,9 @@ export interface CalculationResult {
   neutralSection: StandardSection;
   protectiveSection: StandardSection;
   warnings: string[];
+
+  // Pas 7: Coordinació amb la protecció contra sobrecàrregues
+  protection?: ProtectionCheck;
 }
 
 export function getGammaAtTemperature(
@@ -364,7 +409,7 @@ export function calculateConductorSection(rawInput: CalculationInput): Calculati
     );
   }
 
-  return {
+  const result: CalculationResult = {
     valid: true,
     input,
     effectiveInsulation,
@@ -398,6 +443,81 @@ export function calculateConductorSection(rawInput: CalculationInput): Calculati
     neutralSection,
     protectiveSection,
     warnings,
+  };
+  result.protection = checkProtection(result);
+  return result;
+}
+
+/**
+ * Comprova les dues condicions de protecció contra sobrecàrregues per a la secció definitiva:
+ *   (1) I_b ≤ I_n ≤ I_z     (2) I_2 ≤ 1,45·I_z
+ * Si no es compleixen, cerca la secció mínima que sí ho fa.
+ */
+export function checkProtection(result: CalculationResult): ProtectionCheck {
+  const { input } = result;
+  const device: ProtectionDevice = input.protectionDevice ?? 'magnetotermic';
+  const ratings = PROTECTION_RATINGS[device];
+  const ib = result.serviceCurrentA;
+  const manual = input.protectionRatingA;
+  const autoSelected = !manual;
+  const ratingA = manual ?? ratings.find((r) => r >= ib - 1e-9) ?? null;
+  const iz = result.finalEffectiveAmpacity;
+
+  if (ratingA === null) {
+    return {
+      device,
+      ratingA: null,
+      autoSelected,
+      serviceCurrentA: ib,
+      izA: iz,
+      k: 0,
+      i2A: 0,
+      cond1: false,
+      cond2: false,
+      complies: false,
+      requiredSection: null,
+      requiredIzA: null,
+      minIzA: ib,
+    };
+  }
+
+  const k = conventionalTripFactor(device, ratingA);
+  const i2 = k * ratingA;
+  const minIz = Math.max(ratingA, i2 / 1.45);
+  const cond1 = ib <= ratingA + 1e-9 && ratingA <= iz + 1e-9;
+  const cond2 = i2 <= 1.45 * iz + 1e-9;
+
+  let requiredSection: StandardSection | null = null;
+  let requiredIzA: number | null = null;
+  if (ib <= ratingA + 1e-9) {
+    const startIdx = STANDARD_SECTIONS.indexOf(result.finalSection);
+    for (let i = Math.max(0, startIdx); i < STANDARD_SECTIONS.length; i++) {
+      const s = STANDARD_SECTIONS[i];
+      const amp = lookupBaseAmpacity(s, input.material, input.method, result.effectivePhase, result.effectiveInsulation).ampacity;
+      if (amp === null) continue;
+      const izS = amp * result.combinedFactorK;
+      if (izS >= minIz - 1e-9) {
+        requiredSection = s;
+        requiredIzA = izS;
+        break;
+      }
+    }
+  }
+
+  return {
+    device,
+    ratingA,
+    autoSelected,
+    serviceCurrentA: ib,
+    izA: iz,
+    k,
+    i2A: i2,
+    cond1,
+    cond2,
+    complies: cond1 && cond2,
+    requiredSection,
+    requiredIzA,
+    minIzA: minIz,
   };
 }
 

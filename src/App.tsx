@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { BookOpen, Box, Calculator, ClipboardCheck, ExternalLink, FileText, Zap, type LucideIcon } from 'lucide-react';
 import { InstallationMethodId } from './data/itcBt19';
 import { TheorySection } from './components/TheorySection';
-import { CalculatorSection } from './components/CalculatorSection';
+import { CalculatorSection, DEFAULT_INPUT, applyMethodToInput } from './components/CalculatorSection';
 import { ExercisesSection } from './components/ExercisesSection';
-import { Installation3DViewer } from './components/Installation3DViewer';
+import { Installation3DViewer, ViewerCalcContext, viewerContextFromResult } from './components/Installation3DViewer';
+import { CalculationInput, CalculationResult } from './engine/calculator';
 
 type AppTab = 'theory' | 'calculator' | 'exercises' | 'viewer3d';
 
@@ -18,15 +19,25 @@ const TABS: { id: AppTab; label: string; icon: LucideIcon }[] = [
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AppTab>('theory');
   const [viewerMethod, setViewerMethod] = useState<InstallationMethodId>('B1');
+  // Dades de la calculadora a nivell d'App: es conserven en canviar de pestanya i el visor 3D les pot modificar
+  const [calcInput, setCalcInput] = useState<CalculationInput>(DEFAULT_INPUT);
+  // Últim cas enviat al visor 3D (activa el mapa tèrmic)
+  const [viewerContext, setViewerContext] = useState<ViewerCalcContext | null>(null);
 
   const goTo = (tab: AppTab) => {
     setActiveTab(tab);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleInspectIn3D = (method: InstallationMethodId) => {
-    setViewerMethod(method);
+  const inspectResultIn3D = (result: CalculationResult, source: ViewerCalcContext['source']) => {
+    setViewerMethod(result.input.method);
+    setViewerContext(result.valid ? viewerContextFromResult(result, source) : null);
     goTo('viewer3d');
+  };
+
+  const calculateWithMethod = (method: InstallationMethodId) => {
+    setCalcInput((prev) => applyMethodToInput(prev, method));
+    goTo('calculator');
   };
 
   return (
@@ -71,11 +82,26 @@ export const App: React.FC = () => {
           {activeTab === 'theory' && (
             <TheorySection onGoToCalculator={() => goTo('calculator')} onGoToViewer={() => goTo('viewer3d')} />
           )}
-          {activeTab === 'calculator' && <CalculatorSection onInspectMethodIn3D={handleInspectIn3D} />}
-          {activeTab === 'exercises' && <ExercisesSection />}
-          {activeTab === 'viewer3d' && (
-            <Installation3DViewer selectedMethod={viewerMethod} onSelectMethod={setViewerMethod} />
+          {activeTab === 'calculator' && (
+            <CalculatorSection
+              input={calcInput}
+              onInputChange={setCalcInput}
+              onInspectIn3D={(result) => inspectResultIn3D(result, 'calculadora')}
+            />
           )}
+          {activeTab === 'viewer3d' && (
+            <Installation3DViewer
+              selectedMethod={viewerMethod}
+              onSelectMethod={setViewerMethod}
+              calcContext={viewerContext}
+              onClearCalcContext={() => setViewerContext(null)}
+              onCalculateWithMethod={calculateWithMethod}
+            />
+          )}
+        </div>
+        {/* Els exercicis es mantenen muntats (amagats) perquè no es perdi l'exercici en curs en anar al 3D */}
+        <div className={activeTab === 'exercises' ? 'tab-panel' : undefined} style={activeTab === 'exercises' ? undefined : { display: 'none' }}>
+          <ExercisesSection onInspectIn3D={(result) => inspectResultIn3D(result, 'exercici')} />
         </div>
       </main>
 

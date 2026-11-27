@@ -9,16 +9,38 @@ import {
   PhaseSystem,
   VOLTAGE_DROP_PRESETS,
 } from '../data/itcBt19';
-import { CalculationInput, calculateConductorSection } from '../engine/calculator';
+import {
+  CalculationInput,
+  CalculationResult,
+  PROTECTION_RATINGS,
+  ProtectionDevice,
+  calculateConductorSection,
+} from '../engine/calculator';
 import { StepByStepView } from './StepByStepView';
 import { ReferenceTablesPanel } from './ReferenceTablesPanel';
 import { Tex } from './Tex';
 
 interface CalculatorSectionProps {
-  onInspectMethodIn3D: (method: InstallationMethodId) => void;
+  input: CalculationInput;
+  onInputChange: React.Dispatch<React.SetStateAction<CalculationInput>>;
+  /** Obre el visor 3D amb aquest càlcul (mapa tèrmic) o, si el càlcul no és vàlid, només el mètode */
+  onInspectIn3D: (result: CalculationResult) => void;
 }
 
-const DEFAULT_INPUT: CalculationInput = {
+/** Aplica un canvi de mètode d'instal·lació a les dades d'entrada (temperatura de referència, XLPE en D, trifàsic en G) */
+export function applyMethodToInput(prev: CalculationInput, method: InstallationMethodId): CalculationInput {
+  const info = INSTALLATION_METHODS[method];
+  return {
+    ...prev,
+    method,
+    ambientTemp: info.refTemp,
+    insulation: method === 'D' ? 'XLPE' : prev.insulation,
+    phase: method === 'G' ? 'trifasic' : prev.phase,
+    voltage: method === 'G' ? 400 : prev.voltage,
+  };
+}
+
+export const DEFAULT_INPUT: CalculationInput = {
   phase: 'trifasic',
   voltage: 400,
   powerW: 25000,
@@ -104,8 +126,7 @@ const QUICK_EXAMPLES: { label: string; input: CalculationInput }[] = [
   },
 ];
 
-export const CalculatorSection: React.FC<CalculatorSectionProps> = ({ onInspectMethodIn3D }) => {
-  const [input, setInput] = useState<CalculationInput>(DEFAULT_INPUT);
+export const CalculatorSection: React.FC<CalculatorSectionProps> = ({ input, onInputChange: setInput, onInspectIn3D }) => {
   const [powerUnit, setPowerUnit] = useState<'kW' | 'W'>('kW');
   const [showTable, setShowTable] = useState(false);
 
@@ -120,15 +141,7 @@ export const CalculatorSection: React.FC<CalculatorSectionProps> = ({ onInspectM
   };
 
   const updateMethod = (method: InstallationMethodId) => {
-    const info = INSTALLATION_METHODS[method];
-    setInput((prev) => ({
-      ...prev,
-      method,
-      ambientTemp: info.refTemp,
-      insulation: method === 'D' ? 'XLPE' : prev.insulation,
-      phase: method === 'G' ? 'trifasic' : prev.phase,
-      voltage: method === 'G' ? 400 : prev.voltage,
-    }));
+    setInput((prev) => applyMethodToInput(prev, method));
   };
 
   const displayPower = powerUnit === 'kW' ? Number((input.powerW / 1000).toFixed(3)) : input.powerW;
@@ -362,7 +375,7 @@ export const CalculatorSection: React.FC<CalculatorSectionProps> = ({ onInspectM
                 <span>Tipus d’instal·lació (ITC-BT-19)</span>
                 <button
                   type="button"
-                  onClick={() => onInspectMethodIn3D(input.method)}
+                  onClick={() => onInspectIn3D(result)}
                   style={{
                     border: 'none',
                     background: 'transparent',
@@ -429,6 +442,55 @@ export const CalculatorSection: React.FC<CalculatorSectionProps> = ({ onInspectM
               </div>
             </div>
 
+            {/* Protecció contra sobrecàrregues */}
+            <div className="field-group">
+              <label className="field-label">
+                <span>Protecció (ITC-BT-22)</span>
+                <span className="field-hint">I_b ≤ I_n ≤ I_z</span>
+              </label>
+              <div className="form-row">
+                <div className="segmented">
+                  {(['magnetotermic', 'fusible'] as ProtectionDevice[]).map((d) => (
+                    <button
+                      key={d}
+                      className={`seg-btn ${(input.protectionDevice ?? 'magnetotermic') === d ? 'active' : ''}`}
+                      onClick={() =>
+                        setInput((p) => ({
+                          ...p,
+                          protectionDevice: d,
+                          // Si el calibre triat no existeix per al nou dispositiu, torna a automàtic
+                          protectionRatingA:
+                            p.protectionRatingA && PROTECTION_RATINGS[d].includes(p.protectionRatingA) ? p.protectionRatingA : undefined,
+                        }))
+                      }
+                    >
+                      {d === 'magnetotermic' ? 'Magnetotèrmic' : 'Fusible gG'}
+                    </button>
+                  ))}
+                </div>
+                <select
+                  className="select mono"
+                  value={input.protectionRatingA ?? 'auto'}
+                  onChange={(e) =>
+                    setInput((p) => ({
+                      ...p,
+                      protectionRatingA: e.target.value === 'auto' ? undefined : Number(e.target.value),
+                    }))
+                  }
+                  aria-label="Intensitat nominal de la protecció"
+                >
+                  <option value="auto">
+                    I_n automàtica{result.protection?.ratingA && !input.protectionRatingA ? ` (${result.protection.ratingA} A)` : ''}
+                  </option>
+                  {PROTECTION_RATINGS[input.protectionDevice ?? 'magnetotermic'].map((r) => (
+                    <option key={r} value={r}>
+                      I_n = {r} A
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
             {/* Toggle 2a iteració temperatura real */}
             <label
               style={{
@@ -458,7 +520,7 @@ export const CalculatorSection: React.FC<CalculatorSectionProps> = ({ onInspectM
 
         {/* Right: Didactic Step-by-Step Solution + Highlighted Table */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <StepByStepView result={result} />
+          <StepByStepView result={result} onViewIn3D={result.valid ? () => onInspectIn3D(result) : undefined} />
 
           <div className="card">
             <div className="card-header" style={{ marginBottom: showTable ? '1rem' : 0 }}>
